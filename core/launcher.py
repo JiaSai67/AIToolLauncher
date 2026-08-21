@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -192,9 +192,9 @@ class ToolLauncherApp(tk.Tk):
         # Main Notebook
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
         self.tab_local = ttk.Frame(self.notebook)
         self.tab_cloud = ttk.Frame(self.notebook)
+        self.tab_env = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_local, text='💻 本地專案')
         self.notebook.add(self.tab_cloud, text='☁️ GitHub 雲端專案')
         self.notebook.add(self.tab_env, text='⚙️ 環境報告')
