@@ -18,11 +18,7 @@ ENV_CACHE_FILE = os.path.join(APPDATA_DIR, "env_cache.json")
 CLOUD_TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CloudTools")
 os.makedirs(CLOUD_TOOLS_DIR, exist_ok=True)
 
-GITHUB_TOKEN = ""
-token_path = os.path.join(APPDATA_DIR, "token.txt")
-if os.path.exists(token_path):
-    with open(token_path, "r", encoding="utf-8") as f:
-        GITHUB_TOKEN = f.read().strip()
+
 
 class EnvironmentManager:
     def __init__(self):
@@ -106,7 +102,6 @@ class EnvCacheManager:
                 branch = repo.get('default_branch', 'main')
                 raw_url = f"https://raw.githubusercontent.com/{repo['full_name']}/{branch}/requirements.txt"
                 req = urllib.request.Request(raw_url)
-                req.add_header("Authorization", f"token {GITHUB_TOKEN}")
                 with urllib.request.urlopen(req) as response:
                     content = response.read().decode('utf-8')
                 
@@ -393,9 +388,8 @@ class ToolLauncherApp(tk.Tk):
         
         def fetch():
             try:
-                url = "https://api.github.com/user/repos?visibility=public&affiliation=owner"
+                url = "https://api.github.com/users/JiaSai67/repos"
                 req = urllib.request.Request(url)
-                req.add_header("Authorization", f"token {GITHUB_TOKEN}")
                 req.add_header("Accept", "application/vnd.github.v3+json")
                 req.add_header("User-Agent", "AIToolLauncher")
                 
