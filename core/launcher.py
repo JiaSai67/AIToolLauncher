@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -418,11 +418,27 @@ class ToolLauncherApp(tk.Tk):
         self.local_feedback_text.config(state=tk.DISABLED)
         
         def send_task():
-            import time
-            time.sleep(1) # 假裝發送
-            self.after(0, lambda: self.local_feedback_status.config(text=f"狀態: ✅ 已發送針對 [{project_name}] 的回饋！", foreground="#00CC6A"))
-            self.after(0, lambda: self.local_feedback_text.config(state=tk.NORMAL))
-            self.after(0, lambda: self.local_feedback_text.delete("1.0", tk.END))
+            import urllib.request
+            import urllib.parse
+            
+            url = "https://docs.google.com/forms/d/e/1FAIpQLSfM5yQr_DqRjjVdn2nj8i_Zo7Ng2KGla2o3H_-NjJIUYrIAMg/formResponse"
+            data = {
+                "entry.1929074167": project_name,
+                "entry.1125158425": fb_type,
+                "entry.155668426": content
+            }
+            
+            try:
+                encoded_data = urllib.parse.urlencode(data).encode("utf-8")
+                req = urllib.request.Request(url, data=encoded_data)
+                urllib.request.urlopen(req, timeout=5)
+                
+                self.after(0, lambda: self.local_feedback_status.config(text=f"狀態: ✅ 已成功發送針對 [{project_name}] 的回饋！", foreground="#00CC6A"))
+                self.after(0, lambda: self.local_feedback_text.delete("1.0", tk.END))
+            except Exception as e:
+                self.after(0, lambda: self.local_feedback_status.config(text=f"狀態: 🔴 發送失敗: {e}", foreground="#e74c3c"))
+            finally:
+                self.after(0, lambda: self.local_feedback_text.config(state=tk.NORMAL))
             
         threading.Thread(target=send_task, daemon=True).start()
 
