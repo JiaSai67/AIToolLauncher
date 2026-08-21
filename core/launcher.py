@@ -11,7 +11,12 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
+
+if getattr(sys, 'frozen', False):
+    PYTHON_CMD = "python"
+else:
+    PYTHON_CMD = sys.executable
 
 APPDATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "config")
 os.makedirs(APPDATA_DIR, exist_ok=True)
@@ -640,7 +645,7 @@ class ToolLauncherApp(tk.Tk):
                 status = self.env_cache.check_local(req_path)
                 if status == "needs_install":
                     self.after(0, lambda: self.status_var.set("狀態: ⏳ 準備執行 pip install..."))
-                    p = subprocess.Popen([sys.executable, "-m", "pip", "install", "-r", req_path], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                    p = subprocess.Popen([PYTHON_CMD, "-m", "pip", "install", "-r", req_path], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
                     for line in p.stdout:
                         l = line.strip()
                         if l: self.after(0, lambda text=l[:50]: self.status_var.set(f"狀態: 📦 套件安裝中... {text}"))
@@ -664,7 +669,7 @@ class ToolLauncherApp(tk.Tk):
             log_file = open(log_path, "w", encoding="utf-8")
             
             if exec_path.endswith('.py') or exec_path.endswith('.pyw'):
-                p = subprocess.Popen([sys.executable, exec_path], cwd=cwd, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT)
+                p = subprocess.Popen([PYTHON_CMD, exec_path], cwd=cwd, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT)
             else:
                 p = subprocess.Popen([exec_path], cwd=cwd, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT)
                 
