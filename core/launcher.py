@@ -11,6 +11,8 @@ import shutil
 import re
 import importlib.metadata
 
+VERSION = "1.0.1"
+
 APPDATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "config")
 os.makedirs(APPDATA_DIR, exist_ok=True)
 REGISTRY_FILE = os.path.join(APPDATA_DIR, "registry.json")
@@ -146,7 +148,7 @@ class ToolLauncherApp(tk.Tk):
         except Exception: pass
             
         super().__init__()
-        self.title("AI Tool Launcher (AI專案啟動器)")
+        self.title(f"AI Tool Launcher (AI專案啟動器) v{VERSION}")
         self.geometry("900x650")
         self.configure(bg="#f4f5f7")
         
