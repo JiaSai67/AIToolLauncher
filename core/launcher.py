@@ -521,7 +521,7 @@ class ToolLauncherApp(tk.Tk):
                 
                 if name_match and exec_match:
                     name = name_match.group(1).strip()
-                    if desc_match: desc = desc_match.group(1).strip()
+                    if desc_match and not desc: desc = desc_match.group(1).strip()
                     exec_file = os.path.join(target_dir, exec_match.group(1).strip())
             except: pass
             
