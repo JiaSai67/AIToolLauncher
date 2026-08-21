@@ -161,6 +161,7 @@ class ToolLauncherApp(tk.Tk):
         self.env_cache = EnvCacheManager(self.env_manager)
         
         self.after(1000, self.async_check_all_updates)
+        self.after(2000, self.check_launcher_update)
         
         style = ttk.Style(self)
         style.theme_use('clam')
@@ -172,6 +173,11 @@ class ToolLauncherApp(tk.Tk):
         style.configure("Stop.TButton", font=('Microsoft JhengHei', 12, 'bold'), background="#e74c3c", foreground="white")
         style.configure("Restart.TButton", font=('Microsoft JhengHei', 12, 'bold'), background="#f39c12", foreground="white")
         style.configure("Cloud.TButton", font=('Microsoft JhengHei', 12, 'bold'), background="#3498db", foreground="white")
+        
+        # Launcher Update Frame (Hidden by default)
+        self.launcher_update_frame = ttk.Frame(self)
+        self.btn_update_launcher = ttk.Button(self.launcher_update_frame, text="✨ 啟動器有新版本，點擊更新", style="Cloud.TButton", command=self.do_launcher_update)
+        self.btn_update_launcher.pack(fill=tk.X, padx=10, pady=(10, 0))
         
         # Main Notebook
         self.notebook = ttk.Notebook(self)
@@ -188,6 +194,39 @@ class ToolLauncherApp(tk.Tk):
         self.tab_env = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_env, text="⚙️ 環境報告")
         self.setup_env_tab()
+        
+    def check_launcher_update(self):
+        def task():
+            try:
+                flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                cwd = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                local = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cwd, creationflags=flags, text=True).strip()
+                remote_out = subprocess.check_output(["git", "ls-remote", "origin", "-h", "refs/heads/main"], cwd=cwd, creationflags=flags, text=True).strip()
+                if remote_out:
+                    remote = remote_out.split()[0]
+                    if local and remote and local != remote:
+                        self.after(0, lambda: self.launcher_update_frame.pack(fill=tk.X, before=self.notebook))
+            except: pass
+        threading.Thread(target=task, daemon=True).start()
+        
+    def do_launcher_update(self):
+        self.btn_update_launcher.config(text="⏳ 正在更新啟動器...", state=tk.DISABLED)
+        def task():
+            try:
+                flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                cwd = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                p = subprocess.Popen(["git", "pull"], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                p.wait()
+                if p.returncode == 0:
+                    self.after(0, lambda: messagebox.showinfo("更新成功", "啟動器已成功更新至最新版本！\n請關閉並重新啟動 AIToolLauncher 以套用更新。"))
+                    self.after(0, self.launcher_update_frame.pack_forget)
+                else:
+                    self.after(0, lambda: messagebox.showerror("更新失敗", "無法自動更新啟動器，請檢查網路連線或手動執行 git pull。"))
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror("更新錯誤", str(e)))
+            finally:
+                self.after(0, lambda: self.btn_update_launcher.config(text="✨ 啟動器有新版本，點擊更新", state=tk.NORMAL))
+        threading.Thread(target=task, daemon=True).start()
         
     def async_check_all_updates(self):
         def check_all():
