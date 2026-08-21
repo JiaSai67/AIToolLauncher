@@ -11,9 +11,9 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
-if getattr(sys, 'frozen', False):
+if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
 else:
     PYTHON_CMD = sys.executable
