@@ -320,8 +320,14 @@ class ToolLauncherApp(tk.Tk):
         left_frame = ttk.Frame(self.tab_cloud)
         left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
         
-        ttk.Label(left_frame, text="我的公開 GitHub 倉庫", font=('Microsoft JhengHei', 12, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+        header_frame = ttk.Frame(left_frame)
+        header_frame.pack(fill=tk.X, pady=(0, 5))
         
+        ttk.Label(header_frame, text="JiaSai 小工具倉庫", font=('Microsoft JhengHei', 12, 'bold')).pack(side=tk.LEFT)
+        
+        self.cloud_filter_var = tk.StringVar(value="all")
+        ttk.Radiobutton(header_frame, text="全部", variable=self.cloud_filter_var, value="all", command=self.update_cloud_listbox).pack(side=tk.RIGHT)
+        ttk.Radiobutton(header_frame, text="未安裝", variable=self.cloud_filter_var, value="uninstalled", command=self.update_cloud_listbox).pack(side=tk.RIGHT, padx=(0, 5))
         self.cloud_listbox = tk.Listbox(left_frame, width=30, font=('Microsoft JhengHei', 11), selectbackground="#9b59b6", relief=tk.FLAT, borderwidth=1)
         self.cloud_listbox.pack(fill=tk.Y, expand=True)
         self.cloud_listbox.bind('<<ListboxSelect>>', self.on_select_cloud)
@@ -406,7 +412,11 @@ class ToolLauncherApp(tk.Tk):
 
     def update_cloud_listbox(self):
         self.cloud_listbox.delete(0, tk.END)
+        filter_val = getattr(self, 'cloud_filter_var', tk.StringVar(value="all")).get()
+        
         for repo in self.cloud_repos:
+            if filter_val == "uninstalled" and os.path.exists(os.path.join(CLOUD_TOOLS_DIR, repo['name'])):
+                continue
             self.cloud_listbox.insert(tk.END, repo['name'])
         self.lbl_cloud_name.config(text="請在左側選擇一個倉庫來安裝")
         self.cloud_status_var.set("狀態: 🟢 GitHub 倉庫抓取完畢")
@@ -415,7 +425,10 @@ class ToolLauncherApp(tk.Tk):
         selection = self.cloud_listbox.curselection()
         if not selection: return
         
-        repo = self.cloud_repos[selection[0]]
+        repo_name = self.cloud_listbox.get(selection[0])
+        repo = next((r for r in self.cloud_repos if r['name'] == repo_name), None)
+        if not repo: return
+        
         self.lbl_cloud_name.config(text=repo['name'])
         self.lbl_cloud_desc.config(text=repo.get('description', '無描述'))
         
