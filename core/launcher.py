@@ -325,7 +325,7 @@ class ToolLauncherApp(tk.Tk):
         
         ttk.Label(header_frame, text="JiaSai 小工具倉庫", font=('Microsoft JhengHei', 12, 'bold')).pack(side=tk.LEFT)
         
-        self.cloud_filter_var = tk.StringVar(value="all")
+        self.cloud_filter_var = tk.StringVar(value="uninstalled")
         ttk.Radiobutton(header_frame, text="全部", variable=self.cloud_filter_var, value="all", command=self.update_cloud_listbox).pack(side=tk.RIGHT)
         ttk.Radiobutton(header_frame, text="未安裝", variable=self.cloud_filter_var, value="uninstalled", command=self.update_cloud_listbox).pack(side=tk.RIGHT, padx=(0, 5))
         self.cloud_listbox = tk.Listbox(left_frame, width=30, font=('Microsoft JhengHei', 11), selectbackground="#9b59b6", relief=tk.FLAT, borderwidth=1)
@@ -402,7 +402,7 @@ class ToolLauncherApp(tk.Tk):
                 with urllib.request.urlopen(req) as response:
                     data = json.loads(response.read().decode('utf-8'))
                 
-                self.cloud_repos = data
+                self.cloud_repos = [r for r in data if r['name'].lower() != 'aitoollauncher']
                 self.after(0, self.update_cloud_listbox)
             except Exception as e:
                 self.after(0, lambda: self.lbl_cloud_name.config(text="讀取失敗"))
