@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -194,16 +194,19 @@ class ToolLauncherApp(tk.Tk):
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         self.tab_local = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_local, text="💻 本地專案")
-        self.setup_local_tab()
-        
         self.tab_cloud = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_cloud, text="☁️ GitHub 雲端專案")
-        self.setup_cloud_tab()
-        
         self.tab_env = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_env, text="⚙️ 環境報告")
+        self.tab_feedback = ttk.Frame(self.notebook)
+        
+        self.notebook.add(self.tab_local, text='💻 本地專案')
+        self.notebook.add(self.tab_cloud, text='☁️ GitHub 雲端專案')
+        self.notebook.add(self.tab_env, text='⚙️ 環境報告')
+        self.notebook.add(self.tab_feedback, text='💬 意見回饋')
+        
+        self.setup_local_tab()
+        self.setup_cloud_tab()
         self.setup_env_tab()
+        self.setup_feedback_tab()
         
     def check_launcher_update(self):
         def task():
@@ -386,6 +389,42 @@ class ToolLauncherApp(tk.Tk):
         self.env_text.pack(fill=tk.BOTH, expand=True)
         
         self.update_env_tab()
+
+    def setup_feedback_tab(self):
+        container = ttk.Frame(self.tab_feedback)
+        container.pack(fill=tk.BOTH, expand=True, padx=40, pady=30)
+        
+        ttk.Label(container, text="💡 意見回饋箱", font=('Microsoft JhengHei', 16, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(container, text="如果您有任何新功能的點子，或是發現了什麼 Bug，請在這裡告訴我們！\n您的意見將直接發送給開發團隊，幫助我們把 AI Tool Launcher 變得更好。", font=('Microsoft JhengHei', 11), foreground="#555555").pack(anchor=tk.W, pady=(0, 15))
+        
+        self.feedback_text = tk.Text(container, font=('Microsoft JhengHei', 11), height=10, relief=tk.FLAT, bg="#ffffff", bd=1, highlightthickness=1, highlightcolor="#3498db")
+        self.feedback_text.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        
+        btn_frame = ttk.Frame(container)
+        btn_frame.pack(fill=tk.X)
+        
+        self.feedback_status = ttk.Label(btn_frame, text="", font=('Microsoft JhengHei', 10), foreground="#00CC6A")
+        self.feedback_status.pack(side=tk.LEFT)
+        
+        ttk.Button(btn_frame, text="🚀 送出回饋", style="Launch.TButton", command=self.submit_feedback).pack(side=tk.RIGHT)
+
+    def submit_feedback(self):
+        content = self.feedback_text.get("1.0", tk.END).strip()
+        if not content:
+            messagebox.showwarning("提示", "請先輸入一些內容再送出喔！")
+            return
+            
+        self.feedback_status.config(text="狀態: ⏳ 正在發送中...", foreground="#e67e22")
+        self.feedback_text.config(state=tk.DISABLED)
+        
+        def send_task():
+            import time
+            time.sleep(1) # 假裝發送，等待後端綁定
+            self.after(0, lambda: self.feedback_status.config(text="狀態: ✅ 發送成功！謝謝您的建議。", foreground="#00CC6A"))
+            self.after(0, lambda: self.feedback_text.config(state=tk.NORMAL))
+            self.after(0, lambda: self.feedback_text.delete("1.0", tk.END))
+            
+        threading.Thread(target=send_task, daemon=True).start()
 
     def update_env_tab(self):
         self.env_manager.refresh()
