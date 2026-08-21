@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -195,18 +195,13 @@ class ToolLauncherApp(tk.Tk):
         
         self.tab_local = ttk.Frame(self.notebook)
         self.tab_cloud = ttk.Frame(self.notebook)
-        self.tab_env = ttk.Frame(self.notebook)
-        self.tab_feedback = ttk.Frame(self.notebook)
-        
         self.notebook.add(self.tab_local, text='💻 本地專案')
         self.notebook.add(self.tab_cloud, text='☁️ GitHub 雲端專案')
         self.notebook.add(self.tab_env, text='⚙️ 環境報告')
-        self.notebook.add(self.tab_feedback, text='💬 意見回饋')
         
         self.setup_local_tab()
         self.setup_cloud_tab()
         self.setup_env_tab()
-        self.setup_feedback_tab()
         
     def check_launcher_update(self):
         def task():
@@ -311,21 +306,38 @@ class ToolLauncherApp(tk.Tk):
         self.lbl_desc = tk.Label(self.right_frame, text="", bg="#f4f5f7", fg="#7f8c8d", font=('Microsoft JhengHei', 10), justify=tk.LEFT, wraplength=480)
         self.lbl_desc.pack(anchor=tk.W, pady=(0, 20))
         
-        info_frame = ttk.Frame(self.right_frame)
-        info_frame.pack(fill=tk.X, pady=(0, 20))
-        ttk.Label(info_frame, text="執行檔路徑:").grid(row=0, column=0, sticky=tk.W, pady=5, padx=5)
-        self.lbl_exec = ttk.Label(info_frame, text="-", foreground="#2980b9")
-        self.lbl_exec.grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
-        
-        ttk.Label(info_frame, text="工作目錄:").grid(row=1, column=0, sticky=tk.W, pady=5, padx=5)
-        self.lbl_cwd = ttk.Label(info_frame, text="-", foreground="#2980b9")
-        self.lbl_cwd.grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
-        
         self.action_frame = ttk.Frame(self.right_frame)
         self.action_frame.pack(fill=tk.X, pady=(10, 20))
         
         self.status_var = tk.StringVar(value="狀態: 待命")
-        ttk.Label(self.right_frame, textvariable=self.status_var, font=('Microsoft JhengHei', 10, 'bold')).pack(anchor=tk.W)
+        ttk.Label(self.right_frame, textvariable=self.status_var, font=('Microsoft JhengHei', 10, 'bold')).pack(anchor=tk.W, pady=(0, 20))
+        
+        ttk.Separator(self.right_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+        
+        self.feedback_container = ttk.Frame(self.right_frame)
+        self.feedback_container.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(self.feedback_container, text="💬 快速意見回饋 (將針對此專案提交)", font=('Microsoft JhengHei', 11, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+        
+        type_frame = ttk.Frame(self.feedback_container)
+        type_frame.pack(fill=tk.X, pady=(0, 5))
+        self.feedback_type_var = tk.StringVar(value="BUG")
+        ttk.Radiobutton(type_frame, text="🐛 BUG回報", variable=self.feedback_type_var, value="BUG").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(type_frame, text="💡 功能建議", variable=self.feedback_type_var, value="建議").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(type_frame, text="🤔 其他", variable=self.feedback_type_var, value="其他").pack(side=tk.LEFT)
+        
+        self.local_feedback_text = tk.Text(self.feedback_container, font=('Microsoft JhengHei', 10), height=5, relief=tk.FLAT, bg="#ffffff", bd=1, highlightthickness=1, highlightcolor="#3498db")
+        self.local_feedback_text.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+        
+        fb_btn_frame = ttk.Frame(self.feedback_container)
+        fb_btn_frame.pack(fill=tk.X)
+        
+        self.local_feedback_status = ttk.Label(fb_btn_frame, text="", font=('Microsoft JhengHei', 9), foreground="#00CC6A")
+        self.local_feedback_status.pack(side=tk.LEFT)
+        
+        ttk.Button(fb_btn_frame, text="🚀 送出回饋", command=self.submit_local_feedback).pack(side=tk.RIGHT)
+        
+        self.refresh_list()
         
         self.refresh_list()
 
@@ -390,39 +402,27 @@ class ToolLauncherApp(tk.Tk):
         
         self.update_env_tab()
 
-    def setup_feedback_tab(self):
-        container = ttk.Frame(self.tab_feedback)
-        container.pack(fill=tk.BOTH, expand=True, padx=40, pady=30)
-        
-        ttk.Label(container, text="💡 意見回饋箱", font=('Microsoft JhengHei', 16, 'bold')).pack(anchor=tk.W, pady=(0, 5))
-        ttk.Label(container, text="如果您有任何新功能的點子，或是發現了什麼 Bug，請在這裡告訴我們！\n您的意見將直接發送給開發團隊，幫助我們把 AI Tool Launcher 變得更好。", font=('Microsoft JhengHei', 11), foreground="#555555").pack(anchor=tk.W, pady=(0, 15))
-        
-        self.feedback_text = tk.Text(container, font=('Microsoft JhengHei', 11), height=10, relief=tk.FLAT, bg="#ffffff", bd=1, highlightthickness=1, highlightcolor="#3498db")
-        self.feedback_text.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-        
-        btn_frame = ttk.Frame(container)
-        btn_frame.pack(fill=tk.X)
-        
-        self.feedback_status = ttk.Label(btn_frame, text="", font=('Microsoft JhengHei', 10), foreground="#00CC6A")
-        self.feedback_status.pack(side=tk.LEFT)
-        
-        ttk.Button(btn_frame, text="🚀 送出回饋", style="Launch.TButton", command=self.submit_feedback).pack(side=tk.RIGHT)
-
-    def submit_feedback(self):
-        content = self.feedback_text.get("1.0", tk.END).strip()
-        if not content:
-            messagebox.showwarning("提示", "請先輸入一些內容再送出喔！")
-            return
+    def submit_local_feedback(self):
+        selection = self.listbox.curselection()
+        if not selection:
+            return messagebox.showwarning("提示", "請先選擇一個專案再提交意見！")
             
-        self.feedback_status.config(text="狀態: ⏳ 正在發送中...", foreground="#e67e22")
-        self.feedback_text.config(state=tk.DISABLED)
+        project_name = self.registry["tools"][selection[0]]["name"]
+        fb_type = self.feedback_type_var.get()
+        content = self.local_feedback_text.get("1.0", tk.END).strip()
+        
+        if not content:
+            return messagebox.showwarning("提示", "請先輸入意見內容！")
+            
+        self.local_feedback_status.config(text="狀態: ⏳ 正在發送中...", foreground="#e67e22")
+        self.local_feedback_text.config(state=tk.DISABLED)
         
         def send_task():
             import time
-            time.sleep(1) # 假裝發送，等待後端綁定
-            self.after(0, lambda: self.feedback_status.config(text="狀態: ✅ 發送成功！謝謝您的建議。", foreground="#00CC6A"))
-            self.after(0, lambda: self.feedback_text.config(state=tk.NORMAL))
-            self.after(0, lambda: self.feedback_text.delete("1.0", tk.END))
+            time.sleep(1) # 假裝發送
+            self.after(0, lambda: self.local_feedback_status.config(text=f"狀態: ✅ 已發送針對 [{project_name}] 的回饋！", foreground="#00CC6A"))
+            self.after(0, lambda: self.local_feedback_text.config(state=tk.NORMAL))
+            self.after(0, lambda: self.local_feedback_text.delete("1.0", tk.END))
             
         threading.Thread(target=send_task, daemon=True).start()
 
@@ -599,10 +599,8 @@ class ToolLauncherApp(tk.Tk):
         tool = self.registry["tools"][index]
         self.lbl_name.config(text=tool.get("name", ""))
         self.lbl_desc.config(text=tool.get("description", ""))
-        self.lbl_exec.config(text=tool.get("executable", "-"))
         
         cwd = tool.get("working_dir", "-")
-        self.lbl_cwd.config(text=cwd)
         
         req_path = os.path.join(cwd, "requirements.txt")
         status = self.env_cache.check_local(req_path)
