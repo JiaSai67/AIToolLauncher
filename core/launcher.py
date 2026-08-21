@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-APPDATA_DIR = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), "AI_Tool_Launcher")
+APPDATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "config")
 os.makedirs(APPDATA_DIR, exist_ok=True)
 REGISTRY_FILE = os.path.join(APPDATA_DIR, "registry.json")
 ENV_CACHE_FILE = os.path.join(APPDATA_DIR, "env_cache.json")
@@ -121,7 +121,15 @@ class EnvCacheManager:
 def load_registry():
     if os.path.exists(REGISTRY_FILE):
         try:
-            with open(REGISTRY_FILE, "r", encoding="utf-8") as f: return json.load(f)
+            with open(REGISTRY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                for t in data.get("tools", []):
+                    if "CloudTools" in t.get("working_dir", ""):
+                        repo_name = os.path.basename(t["working_dir"])
+                        new_cwd = os.path.join(CLOUD_TOOLS_DIR, repo_name)
+                        t["executable"] = t.get("executable", "").replace(t["working_dir"], new_cwd)
+                        t["working_dir"] = new_cwd
+                return data
         except Exception: pass
     return {"tools": []}
 
