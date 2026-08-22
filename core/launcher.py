@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.17"
+VERSION = "1.0.18"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -241,10 +241,16 @@ class ToolLauncherApp(tk.Tk):
         bat_path = os.path.join(tempfile.gettempdir(), "restart_launcher.bat")
         cwd = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         with open(bat_path, "w", encoding="utf-8") as f:
+            launcher_cmd = PYTHON_CMD
+            if launcher_cmd.lower().endswith("python.exe"):
+                launcher_cmd = launcher_cmd[:-10] + "pythonw.exe"
+            elif launcher_cmd.lower() == "python":
+                launcher_cmd = "pythonw"
+                
             f.write("@echo off\n")
             f.write("timeout /t 1 /nobreak >nul\n")
             f.write(f"cd /d \"{cwd}\"\n")
-            f.write(f"start \"\" \"{PYTHON_CMD}\" core\\launcher.py\n")
+            f.write(f"start \"\" \"{launcher_cmd}\" core\\launcher.py\n")
             f.write("del \"%~f0\"\n")
         subprocess.Popen([bat_path], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000))
         self.destroy()
