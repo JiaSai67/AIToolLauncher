@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.9"
+VERSION = "1.0.10"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -640,6 +640,25 @@ class ToolLauncherApp(tk.Tk):
         self.listbox.delete(0, tk.END)
         for t in self.registry.get("tools", []): self.listbox.insert(tk.END, t.get("name", "Unknown"))
 
+    def check_project_update_async(self, name, cwd):
+        def check():
+            git_dir = os.path.join(cwd, ".git")
+            if os.path.exists(git_dir):
+                try:
+                    flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                    subprocess.run(["git", "fetch"], cwd=cwd, creationflags=flags, timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    local = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cwd, creationflags=flags, text=True).strip()
+                    remote = subprocess.check_output(["git", "rev-parse", "@{u}"], cwd=cwd, creationflags=flags, text=True).strip()
+                    if local and remote and local != remote:
+                        self.updates_available[name] = True
+                        
+                        # Only refresh UI if the user is still looking at this project
+                        selection = self.listbox.curselection()
+                        if selection and self.registry["tools"][selection[0]]["name"] == name:
+                            self.after(0, self.refresh_action_buttons)
+                except: pass
+        threading.Thread(target=check, daemon=True).start()
+
     def on_select_local(self, event):
         selection = self.listbox.curselection()
         if not selection: return
@@ -663,6 +682,7 @@ class ToolLauncherApp(tk.Tk):
             self.status_var.set("狀態: 待命")
             
         self.refresh_action_buttons()
+        self.check_project_update_async(tool.get("name"), cwd)
         
     def refresh_action_buttons(self):
         for widget in self.action_frame.winfo_children(): widget.destroy()
