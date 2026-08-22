@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.20"
+VERSION = "1.0.21"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -83,8 +83,6 @@ class EnvCacheManager:
             
     def check_local(self, req_path):
         if not os.path.exists(req_path):
-            return "no_req"
-            
             return "no_req", []
             
         current_hash = self.get_file_hash(req_path)
