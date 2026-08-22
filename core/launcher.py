@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.12"
+VERSION = "1.0.13"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -771,9 +771,12 @@ class ToolLauncherApp(tk.Tk):
                 if status == "needs_install":
                     self.after(0, lambda: self.status_var.set("狀態: ⏳ 準備執行 pip install..."))
                     
+                    # 強制使用 python.exe 而非 pythonw.exe，否則 pip 的輸出和錯誤碼會被完全吞噬
+                    pip_cmd = PYTHON_CMD.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in PYTHON_CMD.lower() else "python"
+                    
                     pip_log_path = os.path.join(cwd, "pip_install.log")
                     with open(pip_log_path, "w", encoding="utf-8") as log_file:
-                        p = subprocess.Popen([PYTHON_CMD, "-m", "pip", "install", "-r", req_path], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                        p = subprocess.Popen([pip_cmd, "-m", "pip", "install", "-r", req_path], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
                         for line in p.stdout:
                             l = line.strip()
                             log_file.write(line)
