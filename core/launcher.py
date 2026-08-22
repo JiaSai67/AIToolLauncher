@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.26"
+VERSION = "1.0.27"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -184,7 +184,7 @@ class ToolLauncherApp(tk.Tk):
         style.theme_use('clam')
         style.configure("TFrame", background=self.colors.bg_root)
         style.configure("TLabel", background=self.colors.bg_root, foreground=self.colors.text_main, font=('Microsoft JhengHei', 10))
-        style.configure("Title.TLabel", font=('Microsoft JhengHei', 16, 'bold'), foreground=self.colors.text_main)
+        style.configure("Title.TLabel", font=('Microsoft JhengHei', 16, 'bold'), foreground=self.colors.text_title)
         style.configure("TButton", font=('Microsoft JhengHei', 10), padding=5, background=self.colors.bg_card, foreground=self.colors.text_main, borderwidth=0)
         style.map("TButton", background=[('active', self.colors.select_bg)], foreground=[('active', 'white')])
         style.configure("Launch.TButton", font=('Microsoft JhengHei', 12, 'bold'), background=self.colors.success, foreground="white")
