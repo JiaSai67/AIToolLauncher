@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.11"
+VERSION = "1.0.12"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -226,8 +226,8 @@ class ToolLauncherApp(tk.Tk):
                 p = subprocess.Popen(["git", "pull"], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
                 p.wait()
                 if p.returncode == 0:
-                    self.after(0, lambda: messagebox.showinfo("更新成功", "啟動器已成功更新至最新版本！\n請關閉並重新啟動 AIToolLauncher 以套用更新。"))
                     self.after(0, self.launcher_update_frame.pack_forget)
+                    self.after(0, self.restart_launcher)
                 else:
                     self.after(0, lambda: messagebox.showerror("更新失敗", "無法自動更新啟動器，請檢查網路連線或手動執行 git pull。"))
             except Exception as e:
@@ -235,6 +235,20 @@ class ToolLauncherApp(tk.Tk):
             finally:
                 self.after(0, lambda: self.btn_update_launcher.config(text="✨ 啟動器有新版本，點擊更新", state=tk.NORMAL))
         threading.Thread(target=task, daemon=True).start()
+
+    def restart_launcher(self):
+        import tempfile
+        bat_path = os.path.join(tempfile.gettempdir(), "restart_launcher.bat")
+        cwd = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(bat_path, "w", encoding="utf-8") as f:
+            f.write("@echo off\n")
+            f.write("timeout /t 1 /nobreak >nul\n")
+            f.write(f"cd /d \"{cwd}\"\n")
+            f.write(f"start \"\" \"{PYTHON_CMD}\" core\\launcher.py\n")
+            f.write("del \"%~f0\"\n")
+        subprocess.Popen(["cmd.exe", "/c", "start", "/min", "RestartLauncher", bat_path], creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000))
+        self.destroy()
+        sys.exit(0)
         
     def async_check_all_updates(self):
         def check_all():
@@ -259,6 +273,10 @@ class ToolLauncherApp(tk.Tk):
         if not tool: return
         cwd = tool.get("working_dir")
         
+        was_running = name in self.running_processes
+        if was_running:
+            self.stop_tool(name)
+            
         self.status_var.set(f"狀態: ⏳ 正在更新 {name}...")
         for w in self.action_frame.winfo_children(): w.state(['disabled'])
         
@@ -272,7 +290,11 @@ class ToolLauncherApp(tk.Tk):
                 p.wait()
                 if p.returncode == 0:
                     self.updates_available[name] = False
-                    self.after(0, lambda: self.status_var.set("狀態: 🟢 更新完成！可以啟動專案了。"))
+                    if was_running:
+                        self.after(0, lambda: self.status_var.set("狀態: 🟢 更新完成！正在自動重啟..."))
+                        self.after(0, lambda: self.launch_tool(name))
+                    else:
+                        self.after(0, lambda: self.status_var.set("狀態: 🟢 更新完成！可以啟動專案了。"))
                 else:
                     self.after(0, lambda: self.status_var.set("狀態: 🔴 更新失敗 (請檢查網路或衝突)"))
             except Exception as e:
