@@ -10,9 +10,12 @@ import threading
 import shutil
 import re
 import importlib.metadata
-from theme_utils import get_theme_colors
+try:
+    from core.theme_utils import get_theme_colors
+except ModuleNotFoundError:
+    from theme_utils import get_theme_colors
 
-VERSION = "1.0.23"
+VERSION = "1.0.25"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
