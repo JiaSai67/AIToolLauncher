@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.28"
+VERSION = "1.0.29"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -339,8 +339,8 @@ class ToolLauncherApp(tk.Tk):
         
         btn_frame = ttk.Frame(left_frame)
         btn_frame.pack(fill=tk.X, pady=5)
-        ttk.Button(btn_frame, text="➕ 註冊 (linkme.bat)", command=self.register_new_tool).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        ttk.Button(btn_frame, text="🗑 刪除", command=self.delete_tool).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+        ttk.Button(btn_frame, text="🔄 重新安裝", command=self.reinstall_tool).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        ttk.Button(btn_frame, text="🗑 刪除專案", command=self.delete_tool).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
         
         self.right_frame = ttk.Frame(self.tab_local)
         self.right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -744,39 +744,82 @@ class ToolLauncherApp(tk.Tk):
             if self.updates_available.get(name):
                 ttk.Button(self.action_frame, text="🌟 版本更新", style="Cloud.TButton", command=lambda: self.update_tool(name)).pack(side=tk.LEFT, padx=(10, 0))
             
-    def register_new_tool(self):
-        filepath = filedialog.askopenfilename(filetypes=[("linkme.bat files", "linkme.bat"), ("Batch files", "*.bat"), ("All files", "*.*")], title="選擇專案的 linkme.bat 來註冊")
-        if not filepath: return
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f: content = f.read()
-            name_match = re.search(r'set\s+PROJECT_NAME=(.+)', content)
-            desc_match = re.search(r'set\s+PROJECT_DESC=(.+)', content)
-            exec_match = re.search(r'set\s+EXEC_FILE=%CWD%\\(.+)', content)
-            if not (name_match and exec_match): return messagebox.showerror("錯誤", "找不到必要的設定！")
+    def reinstall_tool(self):
+        selection = self.listbox.curselection()
+        if not selection: return messagebox.showwarning("警告", "請先選擇一個專案")
+        index = selection[0]
+        tool = self.registry["tools"][index]
+        name = tool["name"]
+        cwd = tool.get("working_dir")
+        
+        if not cwd or not os.path.exists(os.path.join(cwd, ".git")):
+            return messagebox.showerror("錯誤", "此專案並非由 Git 倉庫下載 (找不到 .git)，無法使用重新安裝功能。")
             
-            name = name_match.group(1).strip()
-            cwd = os.path.dirname(os.path.abspath(filepath))
-            exec_path = os.path.join(cwd, exec_match.group(1).strip())
+        if not messagebox.askyesno("確認", f"確定要重新安裝 '{name}' 嗎？\n警告：這將會把整個專案資料夾刪除並重新從雲端下載！所有您未提交的修改都會消失！"):
+            return
             
-            self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != name]
-            self.registry.setdefault("tools", []).append({"name": name, "description": desc_match.group(1).strip() if desc_match else "", "executable": exec_path, "working_dir": cwd})
-            save_registry(self.registry)
-            self.refresh_list()
-            messagebox.showinfo("成功", f"專案 '{name}' 註冊成功！")
-        except Exception as e: messagebox.showerror("錯誤", f"註冊失敗: {e}")
+        self.stop_tool(name)
+        
+        def reinstall_task():
+            self.after(0, lambda: self.status_var.set(f"狀態: ⏳ 正在取得遠端網址..."))
+            try:
+                flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                remote_url = subprocess.check_output(["git", "config", "--get", "remote.origin.url"], cwd=cwd, creationflags=flags, text=True).strip()
+                if not remote_url:
+                    self.after(0, lambda: messagebox.showerror("錯誤", "找不到 git remote url，無法重新安裝！"))
+                    self.after(0, lambda: self.status_var.set(f"狀態: 🔴 重新安裝失敗"))
+                    return
+                    
+                self.after(0, lambda: self.status_var.set(f"狀態: 🗑️ 正在刪除舊資料夾..."))
+                parent_dir = os.path.dirname(cwd)
+                folder_name = os.path.basename(cwd)
+                
+                shutil.rmtree(cwd, ignore_errors=True)
+                if os.path.exists(cwd):
+                    self.after(0, lambda: messagebox.showerror("錯誤", "舊資料夾無法完全刪除，可能檔案正在被佔用。請手動刪除後再試。"))
+                    return
+                    
+                self.after(0, lambda: self.status_var.set(f"狀態: 📥 正在重新下載 (clone)..."))
+                p = subprocess.Popen(["git", "clone", remote_url, folder_name], cwd=parent_dir, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                for line in p.stdout:
+                    l = line.strip()
+                    if l: self.after(0, lambda text=l[:50]: self.status_var.set(f"狀態: 🔄 {text}"))
+                p.wait()
+                
+                if p.returncode == 0:
+                    self.after(0, lambda: self.status_var.set("狀態: 🟢 重新安裝完成！可以啟動專案了。"))
+                    self.after(0, self.refresh_action_buttons)
+                else:
+                    self.after(0, lambda: self.status_var.set("狀態: 🔴 重新安裝失敗 (請檢查網路連線)"))
+            except Exception as e:
+                self.after(0, lambda: self.status_var.set(f"狀態: 🔴 重新安裝錯誤: {e}"))
+                
+        threading.Thread(target=reinstall_task, daemon=True).start()
             
     def delete_tool(self):
         selection = self.listbox.curselection()
-        if not selection: return
+        if not selection: return messagebox.showwarning("警告", "請先選擇一個專案")
         index = selection[0]
-        name = self.registry["tools"][index]["name"]
-        if messagebox.askyesno("確認", f"確定要刪除 '{name}' 嗎？"):
+        tool = self.registry["tools"][index]
+        name = tool["name"]
+        
+        if messagebox.askyesno("確認", f"確定要徹底刪除 '{name}' 嗎？\n警告：這將會把整個專案資料夾從硬碟中移除！"):
             self.stop_tool(name)
+            cwd = tool.get("working_dir")
+            
             self.registry["tools"].pop(index)
             save_registry(self.registry)
             self.refresh_list()
             for widget in self.action_frame.winfo_children(): widget.destroy()
             self.lbl_name.config(text="請在左側選擇一個專案來查看細節")
+            self.status_var.set("狀態: 待命")
+            self.lbl_desc.config(text="")
+            
+            if cwd and os.path.isdir(cwd):
+                try:
+                    shutil.rmtree(cwd, ignore_errors=True)
+                except Exception as e:
+                    messagebox.showwarning("警告", f"移除檔案時發生錯誤，部分檔案可能仍留存: {e}")
 
     def launch_tool(self, name):
         tool = next((t for t in self.registry["tools"] if t["name"] == name), None)
