@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.27"
+VERSION = "1.0.28"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -182,10 +182,10 @@ class ToolLauncherApp(tk.Tk):
         
         style = ttk.Style(self)
         style.theme_use('clam')
-        style.configure("TFrame", background=self.colors.bg_root)
-        style.configure("TLabel", background=self.colors.bg_root, foreground=self.colors.text_main, font=('Microsoft JhengHei', 10))
+        style.configure("TFrame", background=self.colors.bg_root, borderwidth=0, lightcolor=self.colors.bg_root, darkcolor=self.colors.bg_root, bordercolor=self.colors.bg_root)
+        style.configure("TLabel", background=self.colors.bg_root, foreground=self.colors.text_main, font=('Microsoft JhengHei', 10), lightcolor=self.colors.bg_root, darkcolor=self.colors.bg_root, bordercolor=self.colors.bg_root)
         style.configure("Title.TLabel", font=('Microsoft JhengHei', 16, 'bold'), foreground=self.colors.text_title)
-        style.configure("TButton", font=('Microsoft JhengHei', 10), padding=5, background=self.colors.bg_card, foreground=self.colors.text_main, borderwidth=0)
+        style.configure("TButton", font=('Microsoft JhengHei', 10), padding=5, background=self.colors.bg_card, foreground=self.colors.text_main, borderwidth=1, bordercolor=self.colors.bg_root, lightcolor=self.colors.bg_card, darkcolor=self.colors.bg_card)
         style.map("TButton", background=[('active', self.colors.select_bg)], foreground=[('active', 'white')])
         style.configure("Launch.TButton", font=('Microsoft JhengHei', 12, 'bold'), background=self.colors.success, foreground="white")
         style.configure("Stop.TButton", font=('Microsoft JhengHei', 12, 'bold'), background=self.colors.error, foreground="white")
@@ -193,9 +193,9 @@ class ToolLauncherApp(tk.Tk):
         style.configure("Cloud.TButton", font=('Microsoft JhengHei', 12, 'bold'), background=self.colors.select_bg, foreground="white")
         
         # Notebook styling
-        style.configure("TNotebook", background=self.colors.bg_root, borderwidth=0)
-        style.configure("TNotebook.Tab", background=self.colors.bg_card, foreground=self.colors.text_main, padding=[15, 5], font=('Microsoft JhengHei', 10), borderwidth=0)
-        style.map("TNotebook.Tab", background=[('selected', self.colors.select_bg)], foreground=[('selected', 'white')])
+        style.configure("TNotebook", background=self.colors.bg_root, borderwidth=0, lightcolor=self.colors.bg_root, darkcolor=self.colors.bg_root, bordercolor=self.colors.bg_root)
+        style.configure("TNotebook.Tab", background=self.colors.bg_card, foreground=self.colors.text_main, padding=[15, 5], font=('Microsoft JhengHei', 10), borderwidth=0, lightcolor=self.colors.bg_root, darkcolor=self.colors.bg_root, bordercolor=self.colors.bg_root)
+        style.map("TNotebook.Tab", background=[('selected', self.colors.bg_root)], foreground=[('selected', self.colors.text_title)])
         
         # Radiobutton styling
         style.configure("TRadiobutton", background=self.colors.bg_root, foreground=self.colors.text_main, font=('Microsoft JhengHei', 10))
@@ -333,7 +333,7 @@ class ToolLauncherApp(tk.Tk):
         
         ttk.Label(left_frame, text="已註冊的 AI 專案", font=('Microsoft JhengHei', 12, 'bold')).pack(anchor=tk.W, pady=(0, 5))
         
-        self.listbox = tk.Listbox(left_frame, width=30, font=('Microsoft JhengHei', 11), bg=self.colors.bg_card, fg=self.colors.text_main, selectbackground=self.colors.select_bg, relief=tk.FLAT, borderwidth=0, highlightthickness=1, highlightbackground=self.colors.border)
+        self.listbox = tk.Listbox(left_frame, width=30, font=('Microsoft JhengHei', 11), bg=self.colors.bg_card, fg=self.colors.text_main, selectbackground=self.colors.select_bg, relief=tk.FLAT, borderwidth=0, highlightthickness=1, highlightbackground=self.colors.bg_root, highlightcolor=self.colors.bg_root)
         self.listbox.pack(fill=tk.Y, expand=True)
         self.listbox.bind('<<ListboxSelect>>', self.on_select_local)
         
@@ -357,7 +357,7 @@ class ToolLauncherApp(tk.Tk):
         self.status_var = tk.StringVar(value="狀態: 待命")
         ttk.Label(self.right_frame, textvariable=self.status_var, font=('Microsoft JhengHei', 10, 'bold')).pack(anchor=tk.W, pady=(0, 20))
         
-        ttk.Separator(self.right_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+        tk.Frame(self.right_frame, bg=self.colors.border, height=1).pack(fill=tk.X, pady=10)
         
         self.feedback_container = ttk.Frame(self.right_frame)
         self.feedback_container.pack(fill=tk.BOTH, expand=True)
@@ -396,7 +396,7 @@ class ToolLauncherApp(tk.Tk):
         self.cloud_filter_var = tk.StringVar(value="uninstalled")
         ttk.Radiobutton(header_frame, text="全部", variable=self.cloud_filter_var, value="all", command=self.update_cloud_listbox).pack(side=tk.RIGHT)
         ttk.Radiobutton(header_frame, text="未安裝", variable=self.cloud_filter_var, value="uninstalled", command=self.update_cloud_listbox).pack(side=tk.RIGHT, padx=(0, 5))
-        self.cloud_listbox = tk.Listbox(left_frame, width=30, font=('Microsoft JhengHei', 11), bg=self.colors.bg_card, fg=self.colors.text_main, selectbackground=self.colors.select_bg, relief=tk.FLAT, borderwidth=0, highlightthickness=1, highlightbackground=self.colors.border)
+        self.cloud_listbox = tk.Listbox(left_frame, width=30, font=('Microsoft JhengHei', 11), bg=self.colors.bg_card, fg=self.colors.text_main, selectbackground=self.colors.select_bg, relief=tk.FLAT, borderwidth=0, highlightthickness=1, highlightbackground=self.colors.bg_root, highlightcolor=self.colors.bg_root)
         self.cloud_listbox.pack(fill=tk.Y, expand=True)
         self.cloud_listbox.bind('<<ListboxSelect>>', self.on_select_cloud)
         
@@ -442,7 +442,7 @@ class ToolLauncherApp(tk.Tk):
         
         ttk.Label(frame, text="目前已安裝的套件 (避免啟動時重複安裝):").pack(anchor=tk.W, pady=(10, 5))
         
-        self.env_text = tk.Text(frame, height=20, bg=self.colors.bg_card, fg=self.colors.text_main, insertbackground=self.colors.text_main, font=('Consolas', 11), state=tk.DISABLED, bd=0, highlightthickness=1, highlightbackground=self.colors.border)
+        self.env_text = tk.Text(frame, height=20, bg=self.colors.bg_card, fg=self.colors.text_main, insertbackground=self.colors.text_main, font=('Consolas', 11), state=tk.DISABLED, bd=0, highlightthickness=1, highlightbackground=self.colors.bg_root, highlightcolor=self.colors.bg_root)
         self.env_text.pack(fill=tk.BOTH, expand=True)
         
         self.update_env_tab()
