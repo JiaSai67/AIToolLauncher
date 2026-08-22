@@ -6,12 +6,25 @@ echo        AI Tool Launcher Setup
 echo ==========================================
 echo.
 
+:: Check for winget
+winget --version >nul 2>&1
+set WINGET_AVAILABLE=%errorlevel%
+
 :: Check Python
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Python is not installed or not in PATH!
-    echo Please install Python and check "Add python.exe to PATH" during installation.
-    echo Download: https://www.python.org/downloads/
+    echo [ERROR] Python is not found in PATH!
+    if "%WINGET_AVAILABLE%"=="0" (
+        echo [Auto-Install] Trying to install Python using Windows Package Manager...
+        winget install Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements
+        echo ==========================================
+        echo [SUCCESS] Python has been installed.
+        echo Please CLOSE this black window and double-click the BAT file again to continue!
+        echo ==========================================
+    ) else (
+        echo Please install Python manually and check "Add python.exe to PATH".
+        echo Download: https://www.python.org/downloads/
+    )
     pause
     exit /b
 )
@@ -19,9 +32,18 @@ if %errorlevel% neq 0 (
 :: Check Git
 git --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Git is not installed!
-    echo Please install Git.
-    echo Download: https://git-scm.com/downloads
+    echo [ERROR] Git is not found!
+    if "%WINGET_AVAILABLE%"=="0" (
+        echo [Auto-Install] Trying to install Git using Windows Package Manager...
+        winget install Git.Git --silent --accept-package-agreements --accept-source-agreements
+        echo ==========================================
+        echo [SUCCESS] Git has been installed.
+        echo Please CLOSE this black window and double-click the BAT file again to continue!
+        echo ==========================================
+    ) else (
+        echo Please install Git manually.
+        echo Download: https://git-scm.com/downloads
+    )
     pause
     exit /b
 )
