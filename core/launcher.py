@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.21"
+VERSION = "1.0.22"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -85,16 +85,16 @@ class EnvCacheManager:
         if not os.path.exists(req_path):
             return "no_req", []
             
-        current_hash = self.get_file_hash(req_path)
+        current_mtime = os.path.getmtime(req_path)
         cache_key = f"local_{req_path}"
         
-        if cache_key in self.cache and self.cache[cache_key].get("hash") == current_hash:
+        if cache_key in self.cache and self.cache[cache_key].get("mtime") == current_mtime:
             return self.cache[cache_key]["status"], self.cache[cache_key].get("missing", [])
             
         missing = self.env_mgr.needs_install(req_path)
         status = "needs_install" if missing else "ready"
         
-        self.cache[cache_key] = {"hash": current_hash, "status": status, "missing": missing}
+        self.cache[cache_key] = {"mtime": current_mtime, "status": status, "missing": missing}
         self.save()
         return status, missing
         
