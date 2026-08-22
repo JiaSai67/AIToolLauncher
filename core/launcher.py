@@ -10,11 +10,7 @@ import threading
 import shutil
 import re
 import importlib.metadata
-import tempfile
-from core.registry import load_registry, save_registry, remove_project
-from core.environment import EnvironmentManager
-from core.env_cache import EnvCacheManager
-from core.theme_utils import get_theme_colors
+from theme_utils import get_theme_colors
 
 VERSION = "1.0.23"
 
