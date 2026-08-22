@@ -10,8 +10,13 @@ import threading
 import shutil
 import re
 import importlib.metadata
+import tempfile
+from core.registry import load_registry, save_registry, remove_project
+from core.environment import EnvironmentManager
+from core.env_cache import EnvCacheManager
+from core.theme_utils import get_theme_colors
 
-VERSION = "1.0.22"
+VERSION = "1.0.23"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -157,7 +162,8 @@ class ToolLauncherApp(tk.Tk):
         super().__init__()
         self.title(f"AI Tool Launcher (AI專案啟動器) v{VERSION}")
         self.geometry("900x650")
-        self.configure(bg="#f4f5f7")
+        self.colors = get_theme_colors()
+        self.configure(bg=self.colors.bg_root)
         
         icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "icon.png")
         if os.path.exists(icon_path):
@@ -177,14 +183,14 @@ class ToolLauncherApp(tk.Tk):
         
         style = ttk.Style(self)
         style.theme_use('clam')
-        style.configure("TFrame", background="#f4f5f7")
-        style.configure("TLabel", background="#f4f5f7", font=('Microsoft JhengHei', 10))
-        style.configure("Title.TLabel", font=('Microsoft JhengHei', 16, 'bold'), foreground="#2c3e50")
-        style.configure("TButton", font=('Microsoft JhengHei', 10), padding=5)
-        style.configure("Launch.TButton", font=('Microsoft JhengHei', 12, 'bold'), background="#27ae60", foreground="white")
-        style.configure("Stop.TButton", font=('Microsoft JhengHei', 12, 'bold'), background="#e74c3c", foreground="white")
+        style.configure("TFrame", background=self.colors.bg_root)
+        style.configure("TLabel", background=self.colors.bg_root, foreground=self.colors.text_main, font=('Microsoft JhengHei', 10))
+        style.configure("Title.TLabel", font=('Microsoft JhengHei', 16, 'bold'), foreground=self.colors.text_main)
+        style.configure("TButton", font=('Microsoft JhengHei', 10), padding=5, background=self.colors.bg_card, foreground=self.colors.text_main)
+        style.configure("Launch.TButton", font=('Microsoft JhengHei', 12, 'bold'), background=self.colors.success, foreground="white")
+        style.configure("Stop.TButton", font=('Microsoft JhengHei', 12, 'bold'), background=self.colors.error, foreground="white")
         style.configure("Restart.TButton", font=('Microsoft JhengHei', 12, 'bold'), background="#f39c12", foreground="white")
-        style.configure("Cloud.TButton", font=('Microsoft JhengHei', 12, 'bold'), background="#3498db", foreground="white")
+        style.configure("Cloud.TButton", font=('Microsoft JhengHei', 12, 'bold'), background=self.colors.select_bg, foreground="white")
         
         # Launcher Update Frame (Hidden by default)
         self.launcher_update_frame = ttk.Frame(self)
@@ -318,7 +324,7 @@ class ToolLauncherApp(tk.Tk):
         
         ttk.Label(left_frame, text="已註冊的 AI 專案", font=('Microsoft JhengHei', 12, 'bold')).pack(anchor=tk.W, pady=(0, 5))
         
-        self.listbox = tk.Listbox(left_frame, width=30, font=('Microsoft JhengHei', 11), selectbackground="#3498db", relief=tk.FLAT, borderwidth=1)
+        self.listbox = tk.Listbox(left_frame, width=30, font=('Microsoft JhengHei', 11), bg=self.colors.bg_card, fg=self.colors.text_main, selectbackground=self.colors.select_bg, relief=tk.FLAT, borderwidth=1)
         self.listbox.pack(fill=tk.Y, expand=True)
         self.listbox.bind('<<ListboxSelect>>', self.on_select_local)
         
@@ -333,7 +339,7 @@ class ToolLauncherApp(tk.Tk):
         self.lbl_name = ttk.Label(self.right_frame, text="請在左側選擇一個專案來查看細節", style="Title.TLabel")
         self.lbl_name.pack(anchor=tk.W, pady=(0, 10))
         
-        self.lbl_desc = tk.Label(self.right_frame, text="", bg="#f4f5f7", fg="#7f8c8d", font=('Microsoft JhengHei', 10), justify=tk.LEFT, wraplength=480)
+        self.lbl_desc = tk.Label(self.right_frame, text="", bg=self.colors.bg_root, fg=self.colors.text_dim, font=('Microsoft JhengHei', 10), justify=tk.LEFT, wraplength=480)
         self.lbl_desc.pack(anchor=tk.W, pady=(0, 20))
         
         self.action_frame = ttk.Frame(self.right_frame)
@@ -356,13 +362,13 @@ class ToolLauncherApp(tk.Tk):
         ttk.Radiobutton(type_frame, text="💡 功能建議", variable=self.feedback_type_var, value="建議").pack(side=tk.LEFT, padx=(0, 10))
         ttk.Radiobutton(type_frame, text="🤔 其他", variable=self.feedback_type_var, value="其他").pack(side=tk.LEFT)
         
-        self.local_feedback_text = tk.Text(self.feedback_container, font=('Microsoft JhengHei', 10), height=5, relief=tk.FLAT, bg="#ffffff", bd=1, highlightthickness=1, highlightcolor="#3498db")
+        self.local_feedback_text = tk.Text(self.feedback_container, font=('Microsoft JhengHei', 10), height=5, relief=tk.FLAT, bg=self.colors.bg_card, fg=self.colors.text_main, bd=1, highlightthickness=1, highlightcolor=self.colors.select_bg)
         self.local_feedback_text.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
         
         fb_btn_frame = ttk.Frame(self.feedback_container)
         fb_btn_frame.pack(fill=tk.X)
         
-        self.local_feedback_status = ttk.Label(fb_btn_frame, text="", font=('Microsoft JhengHei', 9), foreground="#00CC6A")
+        self.local_feedback_status = ttk.Label(fb_btn_frame, text="", font=('Microsoft JhengHei', 9), foreground=self.colors.success)
         self.local_feedback_status.pack(side=tk.LEFT)
         
         ttk.Button(fb_btn_frame, text="🚀 送出回饋", command=self.submit_local_feedback).pack(side=tk.RIGHT)
@@ -381,7 +387,7 @@ class ToolLauncherApp(tk.Tk):
         self.cloud_filter_var = tk.StringVar(value="uninstalled")
         ttk.Radiobutton(header_frame, text="全部", variable=self.cloud_filter_var, value="all", command=self.update_cloud_listbox).pack(side=tk.RIGHT)
         ttk.Radiobutton(header_frame, text="未安裝", variable=self.cloud_filter_var, value="uninstalled", command=self.update_cloud_listbox).pack(side=tk.RIGHT, padx=(0, 5))
-        self.cloud_listbox = tk.Listbox(left_frame, width=30, font=('Microsoft JhengHei', 11), selectbackground="#9b59b6", relief=tk.FLAT, borderwidth=1)
+        self.cloud_listbox = tk.Listbox(left_frame, width=30, font=('Microsoft JhengHei', 11), bg=self.colors.bg_card, fg=self.colors.text_main, selectbackground=self.colors.select_bg, relief=tk.FLAT, borderwidth=1)
         self.cloud_listbox.pack(fill=tk.Y, expand=True)
         self.cloud_listbox.bind('<<ListboxSelect>>', self.on_select_cloud)
         
@@ -395,7 +401,7 @@ class ToolLauncherApp(tk.Tk):
         self.lbl_cloud_name = ttk.Label(self.cloud_right_frame, text="正在讀取 GitHub 倉庫...", style="Title.TLabel")
         self.lbl_cloud_name.pack(anchor=tk.W, pady=(0, 10))
         
-        self.lbl_cloud_desc = tk.Label(self.cloud_right_frame, text="", bg="#f4f5f7", fg="#7f8c8d", font=('Microsoft JhengHei', 10), justify=tk.LEFT, wraplength=480)
+        self.lbl_cloud_desc = tk.Label(self.cloud_right_frame, text="", bg=self.colors.bg_root, fg=self.colors.text_dim, font=('Microsoft JhengHei', 10), justify=tk.LEFT, wraplength=480)
         self.lbl_cloud_desc.pack(anchor=tk.W, pady=(0, 20))
         
         self.cloud_action_frame = ttk.Frame(self.cloud_right_frame)
@@ -416,10 +422,10 @@ class ToolLauncherApp(tk.Tk):
         info_frame = ttk.Frame(frame)
         info_frame.pack(fill=tk.X, pady=(0, 10))
         ttk.Label(info_frame, text="Python 路徑:").grid(row=0, column=0, sticky=tk.W)
-        ttk.Label(info_frame, text=sys.executable, foreground="#2980b9").grid(row=0, column=1, sticky=tk.W, padx=10)
+        ttk.Label(info_frame, text=sys.executable, foreground=self.colors.link).grid(row=0, column=1, sticky=tk.W, padx=10)
         
         ttk.Label(info_frame, text="Python 版本:").grid(row=1, column=0, sticky=tk.W)
-        ttk.Label(info_frame, text=sys.version.split(' ')[0], foreground="#2980b9").grid(row=1, column=1, sticky=tk.W, padx=10)
+        ttk.Label(info_frame, text=sys.version.split(' ')[0], foreground=self.colors.link).grid(row=1, column=1, sticky=tk.W, padx=10)
         
         ttk.Button(info_frame, text="🔄 重新掃描", command=self.update_env_tab).grid(row=0, column=2, rowspan=2, padx=20)
         
@@ -427,7 +433,7 @@ class ToolLauncherApp(tk.Tk):
         
         ttk.Label(frame, text="目前已安裝的套件 (避免啟動時重複安裝):").pack(anchor=tk.W, pady=(10, 5))
         
-        self.env_text = tk.Text(frame, height=20, bg="white", fg="#2c3e50", font=('Consolas', 11), state=tk.DISABLED)
+        self.env_text = tk.Text(frame, height=20, bg=self.colors.bg_card, fg=self.colors.text_main, font=('Consolas', 11), state=tk.DISABLED)
         self.env_text.pack(fill=tk.BOTH, expand=True)
         
         self.update_env_tab()
