@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.29"
+VERSION = "1.0.30"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -774,7 +774,8 @@ class ToolLauncherApp(tk.Tk):
                 parent_dir = os.path.dirname(cwd)
                 folder_name = os.path.basename(cwd)
                 
-                shutil.rmtree(cwd, ignore_errors=True)
+                # Windows shutil.rmtree ignores read-only files (like git objects), so we use rmdir /s /q
+                subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", cwd], creationflags=flags)
                 if os.path.exists(cwd):
                     self.after(0, lambda: messagebox.showerror("錯誤", "舊資料夾無法完全刪除，可能檔案正在被佔用。請手動刪除後再試。"))
                     return
@@ -817,7 +818,8 @@ class ToolLauncherApp(tk.Tk):
             
             if cwd and os.path.isdir(cwd):
                 try:
-                    shutil.rmtree(cwd, ignore_errors=True)
+                    flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                    subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", cwd], creationflags=flags)
                 except Exception as e:
                     messagebox.showwarning("警告", f"移除檔案時發生錯誤，部分檔案可能仍留存: {e}")
 
