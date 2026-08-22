@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.18"
+VERSION = "1.0.20"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -39,6 +39,7 @@ class EnvironmentManager:
             pass
             
     def needs_install_content(self, content):
+        missing = []
         for line in content.splitlines():
             line = line.strip()
             if not line or line.startswith('#'): continue
@@ -47,12 +48,13 @@ class EnvironmentManager:
             if match:
                 pkg_name = match.group(1).lower()
                 if pkg_name not in self.installed_packages:
-                    return True
+                    missing.append(pkg_name)
+                    continue
                 if '==' in line:
                     required_version = line.split('==')[1].strip()
                     if self.installed_packages.get(pkg_name) != required_version:
-                        return True
-        return False
+                        missing.append(f"{pkg_name}=={required_version}")
+        return missing
 
     def needs_install(self, req_path):
         try:
@@ -83,18 +85,20 @@ class EnvCacheManager:
         if not os.path.exists(req_path):
             return "no_req"
             
-        mtime = os.path.getmtime(req_path)
+            return "no_req", []
+            
+        current_hash = self.get_file_hash(req_path)
         cache_key = f"local_{req_path}"
         
-        if cache_key in self.cache and self.cache[cache_key].get("mtime") == mtime:
-            return self.cache[cache_key]["status"]
+        if cache_key in self.cache and self.cache[cache_key].get("hash") == current_hash:
+            return self.cache[cache_key]["status"], self.cache[cache_key].get("missing", [])
             
-        needs = self.env_mgr.needs_install(req_path)
-        status = "needs_install" if needs else "ready"
+        missing = self.env_mgr.needs_install(req_path)
+        status = "needs_install" if missing else "ready"
         
-        self.cache[cache_key] = {"mtime": mtime, "status": status}
+        self.cache[cache_key] = {"hash": current_hash, "status": status, "missing": missing}
         self.save()
-        return status
+        return status, missing
         
     def check_cloud_async(self, repo, callback):
         cache_key = f"cloud_{repo['full_name']}"
@@ -364,8 +368,6 @@ class ToolLauncherApp(tk.Tk):
         self.local_feedback_status.pack(side=tk.LEFT)
         
         ttk.Button(fb_btn_frame, text="🚀 送出回饋", command=self.submit_local_feedback).pack(side=tk.RIGHT)
-        
-        self.refresh_list()
         
         self.refresh_list()
 
@@ -698,12 +700,14 @@ class ToolLauncherApp(tk.Tk):
         cwd = tool.get("working_dir", "-")
         
         req_path = os.path.join(cwd, "requirements.txt")
-        status = self.env_cache.check_local(req_path)
+        status, missing = self.env_cache.check_local(req_path)
         
         if status == "ready":
             self.status_var.set("狀態: 🟢 待命 (環境已相容，可秒開)")
         elif status == "needs_install":
-            self.status_var.set("狀態: 🟡 待命 (啟動時將自動安裝缺失套件)")
+            missing_str = ", ".join(missing[:3])
+            if len(missing) > 3: missing_str += "..."
+            self.status_var.set(f"狀態: ⚪ 待命 (啟動時將自動安裝: {missing_str})")
         elif status == "no_req":
             self.status_var.set("狀態: 🟢 待命 (無 requirements.txt 依賴)")
         else:
@@ -773,7 +777,7 @@ class ToolLauncherApp(tk.Tk):
         def pre_launch_setup():
             flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
             try:
-                status = self.env_cache.check_local(req_path)
+                status, _ = self.env_cache.check_local(req_path)
                 if status == "needs_install":
                     self.after(0, lambda: self.status_var.set("狀態: ⏳ 準備執行 pip install..."))
                     
@@ -813,7 +817,12 @@ class ToolLauncherApp(tk.Tk):
             log_file = open(log_path, "w", encoding="utf-8")
             
             if exec_path.endswith('.py') or exec_path.endswith('.pyw'):
-                p = subprocess.Popen([PYTHON_CMD, exec_path], cwd=cwd, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT)
+                tool_cmd = PYTHON_CMD
+                if tool_cmd.lower().endswith("python.exe"):
+                    tool_cmd = tool_cmd[:-10] + "pythonw.exe"
+                elif tool_cmd.lower() == "python":
+                    tool_cmd = "pythonw"
+                p = subprocess.Popen([tool_cmd, exec_path], cwd=cwd, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT)
             else:
                 p = subprocess.Popen([exec_path], cwd=cwd, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT)
                 
