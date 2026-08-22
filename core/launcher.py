@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.10"
+VERSION = "1.0.11"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -745,24 +745,32 @@ class ToolLauncherApp(tk.Tk):
         def pre_launch_setup():
             flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
             try:
-                # 為了極致啟動速度，我們移除了每次啟動自動 git pull 的行為。
-                
                 status = self.env_cache.check_local(req_path)
                 if status == "needs_install":
                     self.after(0, lambda: self.status_var.set("狀態: ⏳ 準備執行 pip install..."))
-                    p = subprocess.Popen([PYTHON_CMD, "-m", "pip", "install", "-r", req_path], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
-                    for line in p.stdout:
-                        l = line.strip()
-                        if l: self.after(0, lambda text=l[:50]: self.status_var.set(f"狀態: 📦 套件安裝中... {text}"))
-                    p.wait()
+                    
+                    pip_log_path = os.path.join(cwd, "pip_install.log")
+                    with open(pip_log_path, "w", encoding="utf-8") as log_file:
+                        p = subprocess.Popen([PYTHON_CMD, "-m", "pip", "install", "-r", req_path], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                        for line in p.stdout:
+                            l = line.strip()
+                            log_file.write(line)
+                            log_file.flush()
+                            if l: self.after(0, lambda text=l[:50]: self.status_var.set(f"狀態: 📦 套件安裝中... {text}"))
+                        p.wait()
+                    
                     if p.returncode == 0:
                         self.env_manager.refresh()
                         self.after(0, self.update_env_tab)
                         self.env_cache.check_local(req_path)
+                    else:
+                        self.after(0, lambda: self.status_var.set(f"狀態: 🔴 套件安裝失敗 (詳見 pip_install.log)"))
+                        self.after(0, lambda: messagebox.showerror("套件安裝失敗", f"無法安裝必要的套件，請檢查 {pip_log_path} 中的錯誤訊息。"))
+                        return
                 
                 self.after(0, lambda: self._do_launch(name, exec_path, cwd))
             except Exception as e:
-                self.after(0, lambda: self.status_var.set("狀態: 🔴 前置作業失敗"))
+                self.after(0, lambda: self.status_var.set(f"狀態: 🔴 前置作業失敗: {e}"))
                 
         threading.Thread(target=pre_launch_setup, daemon=True).start()
 
