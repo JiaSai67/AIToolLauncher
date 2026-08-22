@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.30"
+VERSION = "1.0.31"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -63,9 +63,21 @@ class EnvironmentManager:
     def needs_install(self, req_path):
         try:
             with open(req_path, 'r', encoding='utf-8') as f:
-                return self.needs_install_content(f.read())
+                content = f.read()
+        except UnicodeDecodeError:
+            try:
+                # 處理 PowerShell 產生之 UTF-16 檔案
+                with open(req_path, 'r', encoding='utf-16') as f:
+                    content = f.read()
+                # 強制轉換回 UTF-8 覆寫，避免 pip install 失敗
+                with open(req_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            except Exception:
+                return ["unknown_error"]
         except Exception:
-            return True
+            return ["unknown_error"]
+            
+        return self.needs_install_content(content)
 
 class EnvCacheManager:
     def __init__(self, env_mgr):
@@ -313,11 +325,25 @@ class ToolLauncherApp(tk.Tk):
                 p.wait()
                 if p.returncode == 0:
                     self.updates_available[name] = False
+                    
+                    # 更新後順便檢查並自動補齊套件
+                    req_path = os.path.join(cwd, "requirements.txt")
+                    if os.path.exists(req_path):
+                        self.after(0, lambda: self.status_var.set("狀態: ⏳ 正在檢查是否有新套件需要安裝..."))
+                        status, _ = self.env_cache.check_local(req_path)
+                        if status == "needs_install":
+                            self.after(0, lambda: self.status_var.set("狀態: 📦 正在自動安裝新套件..."))
+                            pip_cmd = PYTHON_CMD.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in PYTHON_CMD.lower() else "python"
+                            subprocess.run([pip_cmd, "-m", "pip", "install", "-r", req_path], cwd=cwd, creationflags=flags)
+                            self.env_manager.refresh()
+                            self.after(0, self.update_env_tab)
+                            self.env_cache.check_local(req_path)
+                            
                     if was_running:
-                        self.after(0, lambda: self.status_var.set("狀態: 🟢 更新完成！正在自動重啟..."))
+                        self.after(0, lambda: self.status_var.set("狀態: 🟢 更新與套件補齊完成！正在自動重啟..."))
                         self.after(0, lambda: self.launch_tool(name))
                     else:
-                        self.after(0, lambda: self.status_var.set("狀態: 🟢 更新完成！可以啟動專案了。"))
+                        self.after(0, lambda: self.status_var.set("狀態: 🟢 更新與套件補齊完成！可以啟動專案了。"))
                 else:
                     self.after(0, lambda: self.status_var.set("狀態: 🔴 更新失敗 (請檢查網路或衝突)"))
             except Exception as e:
