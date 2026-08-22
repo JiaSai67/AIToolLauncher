@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -395,12 +395,40 @@ class ToolLauncherApp(tk.Tk):
         
         ttk.Button(info_frame, text="🔄 重新掃描", command=self.update_env_tab).grid(row=0, column=2, rowspan=2, padx=20)
         
+        ttk.Button(frame, text="💀 終極自爆：清除 Python 與 Git 環境", style="Stop.TButton", command=self.nuke_environment).pack(anchor=tk.E, pady=(0, 10))
+        
         ttk.Label(frame, text="目前已安裝的套件 (避免啟動時重複安裝):").pack(anchor=tk.W, pady=(10, 5))
         
         self.env_text = tk.Text(frame, height=20, bg="white", fg="#2c3e50", font=('Consolas', 11), state=tk.DISABLED)
         self.env_text.pack(fill=tk.BOTH, expand=True)
         
         self.update_env_tab()
+
+    def nuke_environment(self):
+        confirm = messagebox.askyesno("警告", "💀 終極自爆警告 💀\n\n這將會從您的系統中完全解除安裝 Python 和 Git！\n執行後，本啟動器會立刻強制關閉並崩潰。\n\n您確定要繼續嗎？")
+        if not confirm: return
+        
+        import tempfile
+        bat_path = os.path.join(tempfile.gettempdir(), "nuke_env.bat")
+        with open(bat_path, "w", encoding="utf-8") as f:
+            f.write("@echo off\n")
+            f.write("chcp 65001 >nul\n")
+            f.write("echo [Nuke] 正在等待 Launcher 關閉...\n")
+            f.write("timeout /t 3 /nobreak >nul\n")
+            f.write("echo [Nuke] 正在解除安裝 Git...\n")
+            f.write("winget uninstall Git.Git --silent\n")
+            f.write("echo [Nuke] 正在解除安裝 Python...\n")
+            f.write("winget uninstall Python.Python.3.11 --silent\n")
+            f.write("echo [Nuke] 環境已清除完畢，您可以關閉此視窗了。\n")
+            f.write("pause\n")
+            f.write("del \"%~f0\"\n")
+            
+        # 啟動自爆腳本
+        subprocess.Popen(["cmd.exe", "/c", "start", "Nuke Environment", bat_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
+        
+        # 關閉自己
+        self.destroy()
+        sys.exit(0)
 
     def submit_local_feedback(self):
         selection = self.listbox.curselection()
