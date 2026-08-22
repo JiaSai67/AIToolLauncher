@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.15"
+VERSION = "1.0.16"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -246,7 +246,7 @@ class ToolLauncherApp(tk.Tk):
             f.write(f"cd /d \"{cwd}\"\n")
             f.write(f"start \"\" \"{PYTHON_CMD}\" core\\launcher.py\n")
             f.write("del \"%~f0\"\n")
-        subprocess.Popen(["cmd.exe", "/c", "start", '""', "/min", bat_path], creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000))
+        subprocess.Popen([bat_path], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000))
         self.destroy()
         sys.exit(0)
         
@@ -450,7 +450,7 @@ class ToolLauncherApp(tk.Tk):
             f.write("del \"%~f0\"\n")
             
         # 啟動自爆腳本
-        subprocess.Popen(["cmd.exe", "/c", "start", '""', bat_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
+        subprocess.Popen([bat_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
         
         # 關閉自己
         self.destroy()
