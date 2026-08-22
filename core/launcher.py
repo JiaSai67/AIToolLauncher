@@ -11,7 +11,7 @@ import shutil
 import re
 import importlib.metadata
 
-VERSION = "1.0.8"
+VERSION = "1.0.9"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -409,7 +409,11 @@ class ToolLauncherApp(tk.Tk):
         if not confirm: return
         
         import tempfile
+        import sys
+        
+        python_ver = f"{sys.version_info.major}.{sys.version_info.minor}"
         bat_path = os.path.join(tempfile.gettempdir(), "nuke_env.bat")
+        
         with open(bat_path, "w", encoding="utf-8") as f:
             f.write("@echo off\n")
             f.write("chcp 65001 >nul\n")
@@ -418,9 +422,9 @@ class ToolLauncherApp(tk.Tk):
             f.write("echo [Nuke] 正在解除安裝 Git...\n")
             f.write("winget uninstall Git.Git --silent\n")
             f.write("echo [Nuke] 正在解除安裝 Python...\n")
-            f.write("winget uninstall Python.Python.3.11 --silent\n")
-            f.write("echo [Nuke] 環境已清除完畢，您可以關閉此視窗了。\n")
-            f.write("pause\n")
+            f.write(f"winget uninstall Python.Python.{python_ver} --silent\n")
+            f.write("echo [Nuke] 環境已清除完畢，即將自動關閉視窗...\n")
+            f.write("timeout /t 2 /nobreak >nul\n")
             f.write("del \"%~f0\"\n")
             
         # 啟動自爆腳本
