@@ -14,7 +14,7 @@ if %errorlevel% neq 0 (
     winget install Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
     if !errorlevel! neq 0 (
         echo [System] Downloading Python official installer...
-        powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe' -OutFile '$env:TEMP\python_setup.exe'"
+        powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile('https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe', [System.IO.Path]::GetTempPath() + 'python_setup.exe')"
         if exist "%TEMP%\python_setup.exe" (
             echo [System] Installing Python quietly...
             "%TEMP%\python_setup.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
@@ -40,7 +40,7 @@ if %errorlevel% neq 0 (
     winget install Git.Git --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
     if !errorlevel! neq 0 (
         echo [System] Downloading Git installer from GitHub...
-        powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe' -OutFile '$env:TEMP\git_setup.exe'"
+        powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile('https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe', [System.IO.Path]::GetTempPath() + 'git_setup.exe')"
         if exist "%TEMP%\git_setup.exe" (
             echo [System] Installing Git quietly. Please wait...
             "%TEMP%\git_setup.exe" /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS
