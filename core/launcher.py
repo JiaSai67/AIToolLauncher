@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.40"
+VERSION = "1.0.41"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -646,23 +646,36 @@ class ToolLauncherApp(tk.Tk):
         for w in self.cloud_action_frame.winfo_children(): w.state(['disabled'])
         
         def clone_task():
+            log_lines = []
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                if os.path.exists(target_dir) and not os.path.exists(os.path.join(target_dir, ".git")):
+                if os.path.exists(target_dir):
                     try:
                         shutil.rmtree(target_dir, ignore_errors=True)
                     except: pass
+                    if os.path.exists(target_dir):
+                        subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", target_dir], creationflags=flags)
+                        
                 p = subprocess.Popen(["git", "clone", clone_url, target_dir], creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
                 for line in p.stdout:
                     l = line.strip()
-                    if l: self.after(0, lambda text=l[:50]: self.cloud_status_var.set(f"狀態: 📥 下載中... {text}"))
+                    log_lines.append(line)
+                    if l: self.after(0, lambda text=l[:60]: self.cloud_status_var.set(f"狀態: 📥 下載中... {text}"))
                 p.wait()
+                
+                full_log = "".join(log_lines)
                 if p.returncode == 0:
                     self.after(0, lambda: self.auto_register_cloned_repo(repo, target_dir))
                 else:
-                    raise Exception("Git Clone 回傳錯誤")
+                    log_file_path = os.path.join(APPDATA_DIR, f"git_clone_error_{repo['name']}.log")
+                    with open(log_file_path, "w", encoding="utf-8") as f:
+                        f.write(full_log)
+                    self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 下載失敗 (詳細紀錄已儲存至 log)"))
+                    self.after(0, lambda: messagebox.showerror("下載失敗", f"Git Clone 失敗！\n\n錯誤訊息：\n{full_log[-400:]}\n\n完整日誌已儲存於：\n{log_file_path}"))
             except Exception as e:
                 self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 下載失敗 (請確認已安裝 git): {e}"))
+                self.after(0, lambda: messagebox.showerror("下載失敗", f"下載過程發生未預期的異常：\n{e}"))
+            finally:
                 self.after(0, self.refresh_cloud_action_buttons)
         threading.Thread(target=clone_task, daemon=True).start()
 
@@ -672,6 +685,7 @@ class ToolLauncherApp(tk.Tk):
         for w in self.cloud_action_frame.winfo_children(): w.state(['disabled'])
         
         def pull_task():
+            log_lines = []
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
                 if not os.path.exists(os.path.join(target_dir, ".git")):
@@ -680,15 +694,23 @@ class ToolLauncherApp(tk.Tk):
                 p = subprocess.Popen(["git", "pull"], cwd=target_dir, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
                 for line in p.stdout:
                     l = line.strip()
-                    if l: self.after(0, lambda text=l[:50]: self.cloud_status_var.set(f"狀態: 🔄 更新中... {text}"))
+                    log_lines.append(line)
+                    if l: self.after(0, lambda text=l[:60]: self.cloud_status_var.set(f"狀態: 🔄 更新中... {text}"))
                 p.wait()
+                
+                full_log = "".join(log_lines)
                 if p.returncode == 0:
                     self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🟢 更新成功"))
                     self.after(0, lambda: self.auto_register_cloned_repo(repo, target_dir))
                 else:
-                    raise Exception("Git Pull 回傳錯誤")
+                    log_file_path = os.path.join(APPDATA_DIR, f"git_pull_error_{repo['name']}.log")
+                    with open(log_file_path, "w", encoding="utf-8") as f:
+                        f.write(full_log)
+                    self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 更新失敗 (詳細紀錄已儲存至 log)"))
+                    self.after(0, lambda: messagebox.showerror("更新失敗", f"Git Pull 失敗！\n\n錯誤訊息：\n{full_log[-400:]}\n\n完整日誌已儲存於：\n{log_file_path}"))
             except Exception as e:
                 self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 更新失敗: {e}"))
+                self.after(0, lambda: messagebox.showerror("更新失敗", f"更新過程發生未預期的異常：\n{e}"))
             finally:
                 self.after(0, self.refresh_cloud_action_buttons)
         threading.Thread(target=pull_task, daemon=True).start()
