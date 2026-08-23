@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.41"
+VERSION = "1.0.42"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -494,29 +494,93 @@ class ToolLauncherApp(tk.Tk):
         self.update_env_tab()
 
     def nuke_environment(self):
-        confirm = messagebox.askyesno("警告", "💀 終極自爆警告 💀\n\n這將會從您的系統中完全解除安裝 Python 和 Git！\n執行後，本啟動器會立刻強制關閉並崩潰。\n\n您確定要繼續嗎？")
+        confirm = messagebox.askyesno("💀 終極自爆確認", "【警告】此操作將徹底清除系統中的所有開發環境！\n\n包含：\n1. 解除安裝所有版本的 Python 與 Git (支援 winget、官方 uninstaller、註冊表搜尋)\n2. 清除所有 Python pip 快取、套件庫、全域設定檔\n3. 清除 AIToolLauncher 所有快取與設定檔\n4. 清理系統 PATH 環境變數中的 Python/Git 殘留路徑\n\n執行後，本啟動器會立刻強制退出。\n\n確定要徹底自爆清除嗎？")
         if not confirm: return
         
         import tempfile
         import sys
         
         python_ver = f"{sys.version_info.major}.{sys.version_info.minor}"
+        python_exe = sys.executable
+        python_dir = os.path.dirname(python_exe)
+        python_uninstaller = os.path.join(python_dir, "Uninstall.exe")
+        
         bat_path = os.path.join(tempfile.gettempdir(), "nuke_env.bat")
         
         with open(bat_path, "w", encoding="utf-8") as f:
             f.write("@echo off\n")
             f.write("chcp 65001 >nul\n")
-            f.write("echo [Nuke] 正在等待 Launcher 關閉...\n")
+            f.write("title [NUKE] 正在徹底清除 Python 與 Git 環境...\n")
+            f.write("echo ========================================================\n")
+            f.write("echo              [NUKE] 終極自爆環境清理程式\n")
+            f.write("echo ========================================================\n")
+            f.write("echo.\n")
+            f.write("echo [1/6] 正在等待 Launcher 進程釋放...\n")
             f.write("timeout /t 3 /nobreak >nul\n")
-            f.write("echo [Nuke] 正在解除安裝 Git...\n")
-            f.write("winget uninstall Git.Git --silent\n")
-            f.write("echo [Nuke] 正在解除安裝 Python...\n")
-            f.write(f"winget uninstall Python.Python.{python_ver} --silent\n")
-            f.write("echo [Nuke] 環境已清除完畢，即將自動關閉視窗...\n")
-            f.write("timeout /t 2 /nobreak >nul\n")
-            f.write("del \"%~f0\"\n")
+            f.write("echo.\n")
             
-        # 啟動自爆腳本
+            # 1. 終結殘留進程
+            f.write("echo [2/6] 強制終結所有 Python 與 Git 殘留進程...\n")
+            f.write("taskkill /F /IM python.exe /T >nul 2>&1\n")
+            f.write("taskkill /F /IM pythonw.exe /T >nul 2>&1\n")
+            f.write("taskkill /F /IM git.exe /T >nul 2>&1\n")
+            f.write("echo 殘留進程已終結。\n")
+            f.write("echo.\n")
+            
+            # 2. 解除安裝 Git
+            f.write("echo [3/6] 正在解除安裝 Git...\n")
+            f.write("winget uninstall Git.Git --silent >nul 2>&1\n")
+            f.write("if exist \"%ProgramFiles%\\Git\\unins000.exe\" (\n")
+            f.write("    echo 正在呼叫 Git 官方反安裝程式...\n")
+            f.write("    \"%ProgramFiles%\\Git\\unins000.exe\" /VERYSILENT /NORESTART /SUPPRESSMSGBOXES\n")
+            f.write(")\n")
+            f.write("if exist \"%ProgramFiles(x86)%\\Git\\unins000.exe\" (\n")
+            f.write("    \"%ProgramFiles(x86)%\\Git\\unins000.exe\" /VERYSILENT /NORESTART /SUPPRESSMSGBOXES\n")
+            f.write(")\n")
+            f.write("if exist \"%LOCALAPPDATA%\\Programs\\Git\\unins000.exe\" (\n")
+            f.write("    \"%LOCALAPPDATA%\\Programs\\Git\\unins000.exe\" /VERYSILENT /NORESTART /SUPPRESSMSGBOXES\n")
+            f.write(")\n")
+            f.write("powershell -Command \"Get-Package -Name '*Git*' -ErrorAction SilentlyContinue | Uninstall-Package -Force -ErrorAction SilentlyContinue\" >nul 2>&1\n")
+            f.write("echo Git 解除安裝程序完成。\n")
+            f.write("echo.\n")
+            
+            # 3. 解除安裝 Python
+            f.write("echo [4/6] 正在解除安裝 Python...\n")
+            f.write(f"winget uninstall Python.Python.{python_ver} --silent >nul 2>&1\n")
+            f.write("powershell -Command \"Get-Package -Name '*Python*' -ErrorAction SilentlyContinue | Uninstall-Package -Force -ErrorAction SilentlyContinue\" >nul 2>&1\n")
+            f.write("powershell -Command \"Get-CimInstance Win32_Product -Filter \\\"Name like 'Python%'\\\" -ErrorAction SilentlyContinue | ForEach-Object { $_.Uninstall() }\" >nul 2>&1\n")
+            f.write("echo Python 解除安裝程序完成。\n")
+            f.write("echo.\n")
+            
+            # 4. 清理殘留資料夾與快取 (pip cache, appdata, registry config)
+            f.write("echo [5/6] 正在清除所有 Python/Git/Pip/大廳 設定與快取資料夾...\n")
+            f.write("rmdir /s /q \"%LOCALAPPDATA%\\pip\" >nul 2>&1\n")
+            f.write("rmdir /s /q \"%LOCALAPPDATA%\\Programs\\Python\" >nul 2>&1\n")
+            f.write("rmdir /s /q \"%LOCALAPPDATA%\\Programs\\Git\" >nul 2>&1\n")
+            f.write("rmdir /s /q \"%APPDATA%\\Python\" >nul 2>&1\n")
+            f.write("rmdir /s /q \"%USERPROFILE%\\.gitconfig\" >nul 2>&1\n")
+            f.write("del /f /q \"%USERPROFILE%\\.gitconfig\" >nul 2>&1\n")
+            f.write("rmdir /s /q \"%ProgramFiles%\\Git\" >nul 2>&1\n")
+            f.write(f"rmdir /s /q \"{APPDATA_DIR}\" >nul 2>&1\n")
+            f.write("echo 快取與殘留目錄已全數清除。\n")
+            f.write("echo.\n")
+            
+            # 5. 清理環境變數 PATH
+            f.write("echo [6/6] 正在清理系統與使用者環境變數 PATH 殘留路徑...\n")
+            f.write("powershell -Command \"$p = [Environment]::GetEnvironmentVariable('PATH', 'User'); $newP = ($p -split ';' | Where-Object { $_ -notlike '*Python*' -and $_ -notlike '*Git*' -and $_ -notlike '*pip*' }) -join ';'; [Environment]::SetEnvironmentVariable('PATH', $newP, 'User')\" >nul 2>&1\n")
+            f.write("powershell -Command \"$p = [Environment]::GetEnvironmentVariable('PATH', 'Machine'); $newP = ($p -split ';' | Where-Object { $_ -notlike '*Python*' -and $_ -notlike '*Git*' -and $_ -notlike '*pip*' }) -join ';'; [Environment]::SetEnvironmentVariable('PATH', $newP, 'Machine')\" >nul 2>&1\n")
+            f.write("echo PATH 清理完畢。\n")
+            f.write("echo.\n")
+            
+            f.write("echo ========================================================\n")
+            f.write("echo  💥 [NUKE 完成] Python、Git 與所有相關快取已徹底清除完畢！\n")
+            f.write("echo  視窗將在 5 秒後自動關閉...\n")
+            f.write("echo ========================================================\n")
+            f.write("timeout /t 5 /nobreak >nul\n")
+            f.write("del \"%~f0\" >nul 2>&1\n")
+            f.write("exit\n")
+            
+        # 啟動終端機自爆腳本
         subprocess.Popen([bat_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
         
         # 關閉自己
