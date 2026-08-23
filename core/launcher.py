@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.33"
+VERSION = "1.0.34"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -710,6 +710,11 @@ class ToolLauncherApp(tk.Tk):
         for t in self.registry.get("tools", []): self.listbox.insert(tk.END, t.get("name", "Unknown"))
 
     def check_project_update_async(self, name, cwd):
+        # 只有存放在 CloudTools 目錄下的專案才檢查更新
+        cloud_prefix = os.path.abspath(CLOUD_TOOLS_DIR)
+        if not os.path.abspath(cwd).startswith(cloud_prefix):
+            return
+            
         def check():
             git_dir = os.path.join(cwd, ".git")
             if os.path.exists(git_dir):
