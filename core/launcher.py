@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.35"
+VERSION = "1.0.37"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -340,7 +340,21 @@ class ToolLauncherApp(tk.Tk):
                         if status == "needs_install":
                             self.after(0, lambda: self.status_var.set("狀態: 📦 正在自動安裝新套件..."))
                             pip_cmd = PYTHON_CMD.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in PYTHON_CMD.lower() else "python"
-                            subprocess.run([pip_cmd, "-m", "pip", "install", "-r", req_path], cwd=cwd, creationflags=flags)
+                            
+                            pip_log_path = os.path.join(cwd, "pip_install.log")
+                            with open(pip_log_path, "w", encoding="utf-8") as log_file:
+                                p_install = subprocess.run([pip_cmd, "-m", "pip", "install", "-r", req_path], cwd=cwd, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                                if p_install.returncode != 0:
+                                    log_file.write("\n[Fallback] 批量安裝失敗，啟動逐行安裝模式...\n")
+                                    try:
+                                        with open(req_path, 'r', encoding='utf-8') as f: lines = f.readlines()
+                                        for req_line in lines:
+                                            req_line = req_line.strip()
+                                            if not req_line or req_line.startswith('#'): continue
+                                            subprocess.run([pip_cmd, "-m", "pip", "install", req_line], cwd=cwd, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                                    except Exception as e:
+                                        log_file.write(f"\n[Fallback Error] {e}\n")
+                            
                             self.env_manager.refresh()
                             self.after(0, self.update_env_tab)
                             self.env_cache.check_local(req_path)
@@ -888,15 +902,31 @@ class ToolLauncherApp(tk.Tk):
                             log_file.flush()
                             if l: self.after(0, lambda text=l[:50]: self.status_var.set(f"狀態: 📦 套件安裝中... {text}"))
                         p.wait()
+                        
+                        # 容錯機制：如果批量安裝失敗，則逐行安裝，確保好的套件不會被牽連
+                        if p.returncode != 0:
+                            log_file.write("\n[Fallback] 批量安裝失敗，啟動逐行安裝模式...\n")
+                            try:
+                                with open(req_path, 'r', encoding='utf-8') as f: lines = f.readlines()
+                                for req_line in lines:
+                                    req_line = req_line.strip()
+                                    if not req_line or req_line.startswith('#'): continue
+                                    self.after(0, lambda text=req_line: self.status_var.set(f"狀態: 📦 嘗試單獨安裝: {text}"))
+                                    p_single = subprocess.Popen([pip_cmd, "-m", "pip", "install", req_line], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                                    for l_single in p_single.stdout:
+                                        log_file.write(l_single)
+                                        log_file.flush()
+                                    p_single.wait()
+                            except Exception as e:
+                                log_file.write(f"\n[Fallback Error] 逐行安裝過程發生錯誤: {e}\n")
                     
-                    if p.returncode == 0:
-                        self.env_manager.refresh()
-                        self.after(0, self.update_env_tab)
-                        self.env_cache.check_local(req_path)
-                    else:
-                        self.after(0, lambda: self.status_var.set(f"狀態: 🔴 套件安裝失敗 (詳見 pip_install.log)"))
-                        self.after(0, lambda: messagebox.showerror("套件安裝失敗", f"無法安裝必要的套件，請檢查 {pip_log_path} 中的錯誤訊息。"))
-                        return
+                    self.env_manager.refresh()
+                    self.after(0, self.update_env_tab)
+                    self.env_cache.check_local(req_path)
+                    
+                    if p.returncode != 0:
+                        self.after(0, lambda: self.status_var.set(f"狀態: ⚠️ 部分套件安裝失敗，已盡力補齊 (詳見 pip_install.log)"))
+                        self.after(0, lambda: messagebox.showwarning("套件安裝警告", f"部分套件安裝失敗（例如缺少系統依賴）。\n\n已啟動容錯機制，將跳過損壞的套件並強行補齊其他套件。\n請查看 {pip_log_path} 了解詳情。"))
                 
                 self.after(0, lambda: self._do_launch(name, exec_path, cwd))
             except Exception as e:
