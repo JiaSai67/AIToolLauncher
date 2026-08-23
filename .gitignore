@@ -2,3 +2,4 @@ CloudTools/
 __pycache__/
 *.pyc
 resources/config/
+.scratch/

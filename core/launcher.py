@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.38"
+VERSION = "1.0.40"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -616,11 +616,11 @@ class ToolLauncherApp(tk.Tk):
         
         self.lbl_cloud_name.config(text=repo['name'])
         self.lbl_cloud_desc.config(text=repo.get('description', '無描述'))
-        
         for widget in self.cloud_action_frame.winfo_children(): widget.destroy()
             
         target_dir = os.path.join(CLOUD_TOOLS_DIR, repo['name'])
-        if os.path.exists(target_dir):
+        is_installed = os.path.exists(target_dir) and os.path.exists(os.path.join(target_dir, ".git"))
+        if is_installed:
             ttk.Button(self.cloud_action_frame, text="🔄 重新拉取 (git pull)", style="Cloud.TButton", command=lambda: self.update_cloud_repo(repo)).pack(side=tk.LEFT, padx=(0, 10))
             self.cloud_status_var.set("狀態: 🟢 此倉庫已安裝於本地")
         else:
@@ -648,6 +648,10 @@ class ToolLauncherApp(tk.Tk):
         def clone_task():
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                if os.path.exists(target_dir) and not os.path.exists(os.path.join(target_dir, ".git")):
+                    try:
+                        shutil.rmtree(target_dir, ignore_errors=True)
+                    except: pass
                 p = subprocess.Popen(["git", "clone", clone_url, target_dir], creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
                 for line in p.stdout:
                     l = line.strip()
@@ -670,6 +674,9 @@ class ToolLauncherApp(tk.Tk):
         def pull_task():
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                if not os.path.exists(os.path.join(target_dir, ".git")):
+                    self.after(0, lambda: self.install_cloud_repo(repo))
+                    return
                 p = subprocess.Popen(["git", "pull"], cwd=target_dir, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
                 for line in p.stdout:
                     l = line.strip()
