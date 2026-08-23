@@ -7,41 +7,49 @@ echo        AI Tool Launcher Setup
 echo ==========================================
 echo.
 
-:: Check for winget
-winget --version >nul 2>&1
-set WINGET_AVAILABLE=%errorlevel%
-
 :check_python
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Python is not found in PATH!
-    if "%WINGET_AVAILABLE%"=="0" (
+    winget --version >nul 2>&1
+    if !errorlevel! equ 0 (
         echo [Auto-Install] Installing Python... Please wait.
         winget install Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements
         call :RefreshPath
-        goto :check_python
-    ) else (
-        echo Please install Python manually. Download: https://www.python.org/downloads/
-        pause
-        exit /b
+        python --version >nul 2>&1
+        if !errorlevel! equ 0 goto :check_git
     )
+    echo =======================================================
+    echo [錯誤] 找不到 Python，且系統無 winget 自動安裝支援。
+    echo 請手動下載並安裝 Python (勾選 Add Python to PATH)：
+    echo https://www.python.org/downloads/
+    echo =======================================================
+    pause
+    exit /b
 )
 
 :check_git
 git --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Git is not found!
-    if "%WINGET_AVAILABLE%"=="0" (
+    winget --version >nul 2>&1
+    if !errorlevel! equ 0 (
         echo [Auto-Install] Installing Git... Please wait.
         winget install Git.Git --silent --accept-package-agreements --accept-source-agreements
         call :RefreshPath
-        goto :check_git
-    ) else (
-        echo Please install Git manually. Download: https://git-scm.com/downloads
-        pause
-        exit /b
+        git --version >nul 2>&1
+        if !errorlevel! equ 0 goto :start_setup
     )
+    echo =======================================================
+    echo [錯誤] 找不到 Git，且系統無 winget 自動安裝支援。
+    echo 請手動下載並安裝 Git：
+    echo https://git-scm.com/downloads
+    echo =======================================================
+    pause
+    exit /b
 )
+
+:start_setup
 
 set REPO_URL=https://github.com/JiaSai67/AIToolLauncher.git
 set FOLDER_NAME=AIToolLauncher
