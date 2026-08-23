@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.37"
+VERSION = "1.0.38"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -696,17 +696,26 @@ class ToolLauncherApp(tk.Tk):
         # 1. 如果有 linkme.bat，優先讀取裡面的設定
         linkme = os.path.join(target_dir, "linkme.bat")
         if os.path.exists(linkme):
+            content = None
             try:
                 with open(linkme, 'r', encoding='utf-8') as f: content = f.read()
-                name_match = re.search(r'set\s+PROJECT_NAME=(.+)', content)
-                desc_match = re.search(r'set\s+PROJECT_DESC=(.+)', content)
-                exec_match = re.search(r'set\s+EXEC_FILE=%CWD%\\(.+)', content)
-                
-                if name_match and exec_match:
-                    name = name_match.group(1).strip()
-                    if desc_match and not desc: desc = desc_match.group(1).strip()
-                    exec_file = os.path.join(target_dir, exec_match.group(1).strip())
-            except: pass
+            except UnicodeDecodeError:
+                try:
+                    with open(linkme, 'r', encoding='big5') as f: content = f.read()
+                except:
+                    pass
+                    
+            if content:
+                try:
+                    name_match = re.search(r'set\s+PROJECT_NAME=(.+)', content)
+                    desc_match = re.search(r'set\s+PROJECT_DESC=(.+)', content)
+                    exec_match = re.search(r'set\s+EXEC_FILE=%CWD%\\(.+)', content)
+                    
+                    if name_match and exec_match:
+                        name = name_match.group(1).strip()
+                        if desc_match and not desc: desc = desc_match.group(1).strip()
+                        exec_file = os.path.join(target_dir, exec_match.group(1).strip())
+                except: pass
             
         # 2. 如果沒有 linkme.bat 或是讀取失敗，就尋找常見的啟動檔
         if not exec_file:
