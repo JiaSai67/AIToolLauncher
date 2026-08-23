@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.32"
+VERSION = "1.0.33"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -365,7 +365,6 @@ class ToolLauncherApp(tk.Tk):
         
         btn_frame = ttk.Frame(left_frame)
         btn_frame.pack(fill=tk.X, pady=5)
-        ttk.Button(btn_frame, text="➕ 註冊專案", command=self.register_new_tool).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         ttk.Button(btn_frame, text="🔄 重新安裝", command=self.reinstall_tool).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         ttk.Button(btn_frame, text="🗑 刪除專案", command=self.delete_tool).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
         
@@ -771,27 +770,6 @@ class ToolLauncherApp(tk.Tk):
             if self.updates_available.get(name):
                 ttk.Button(self.action_frame, text="🌟 版本更新", style="Cloud.TButton", command=lambda: self.update_tool(name)).pack(side=tk.LEFT, padx=(10, 0))
                 
-    def register_new_tool(self):
-        filepath = filedialog.askopenfilename(filetypes=[("linkme.bat files", "linkme.bat"), ("Batch files", "*.bat"), ("All files", "*.*")], title="選擇專案的 linkme.bat 來註冊")
-        if not filepath: return
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f: content = f.read()
-            name_match = re.search(r'set\s+PROJECT_NAME=(.+)', content)
-            desc_match = re.search(r'set\s+PROJECT_DESC=(.+)', content)
-            exec_match = re.search(r'set\s+EXEC_FILE=%CWD%\\(.+)', content)
-            if not (name_match and exec_match): return messagebox.showerror("錯誤", "找不到必要的設定！")
-            
-            name = name_match.group(1).strip()
-            cwd = os.path.dirname(os.path.abspath(filepath))
-            exec_path = os.path.join(cwd, exec_match.group(1).strip())
-            
-            self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != name]
-            self.registry.setdefault("tools", []).append({"name": name, "description": desc_match.group(1).strip() if desc_match else "", "executable": exec_path, "working_dir": cwd})
-            save_registry(self.registry)
-            self.refresh_list()
-            messagebox.showinfo("成功", f"專案 '{name}' 註冊成功！")
-        except Exception as e: messagebox.showerror("錯誤", f"註冊失敗: {e}")
-
     def reinstall_tool(self):
         selection = self.listbox.curselection()
         if not selection: return messagebox.showwarning("警告", "請先選擇一個專案")
