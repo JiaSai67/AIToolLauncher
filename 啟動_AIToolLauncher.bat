@@ -11,15 +11,19 @@ echo.
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [System] Python not found. Installing Python 3.11 automatically...
-    echo [System] Downloading Python official installer (Please wait)...
-    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $wc = New-Object System.Net.WebClient; $wc.DownloadFile('https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe', [System.IO.Path]::GetTempPath() + 'python_setup.exe')"
+    echo [System] Downloading Python official installer (with progress)...
+    
+    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { $ProgressPreference = 'Continue'; $wc = New-Object System.Net.WebClient; $wc.DownloadFile('https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe', [System.IO.Path]::GetTempPath() + 'python_setup.exe'); exit 0 } catch { Write-Host '[ERROR]' $_.Exception.Message; exit 1 }"
+    if %errorlevel% neq 0 (
+        echo [ERROR] Failed to download Python installer! Please check your internet connection.
+        pause
+        exit /b 1
+    )
+    
     if exist "%TEMP%\python_setup.exe" (
-        echo [System] Installing Python in background...
+        echo [System] Installing Python quietly...
         start /wait "" "%TEMP%\python_setup.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
         del "%TEMP%\python_setup.exe" >nul 2>&1
-    ) else (
-        echo [System] Falling back to winget...
-        winget install Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
     )
     call :RefreshPath
 )
@@ -27,8 +31,8 @@ if %errorlevel% neq 0 (
 :: Verify Python
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Python installation failed. Please install Python manually:
-    echo https://www.python.org/downloads/
+    echo [ERROR] Python installation failed or was interrupted.
+    echo Please install Python manually: https://www.python.org/downloads/
     pause
     exit /b 1
 )
@@ -37,15 +41,20 @@ if %errorlevel% neq 0 (
 git --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [System] Git not found. Installing Git automatically...
-    echo [System] Downloading Git installer (60MB, please wait a moment)...
-    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $wc = New-Object System.Net.WebClient; $wc.DownloadFile('https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe', [System.IO.Path]::GetTempPath() + 'git_setup.exe')"
+    echo [System] Downloading Git installer (60MB, please wait)...
+    
+    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Start-BitsTransfer -Source 'https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe' -Destination ([System.IO.Path]::GetTempPath() + 'git_setup.exe') -DisplayName 'Downloading Git 64-bit'; exit 0 } catch { try { $wc = New-Object System.Net.WebClient; $wc.DownloadFile('https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe', [System.IO.Path]::GetTempPath() + 'git_setup.exe'); exit 0 } catch { Write-Host '[ERROR]' $_.Exception.Message; exit 1 } }"
+    if %errorlevel% neq 0 (
+        echo [ERROR] Failed to download Git installer from GitHub!
+        echo Please check your internet connection or firewall.
+        pause
+        exit /b 1
+    )
+    
     if exist "%TEMP%\git_setup.exe" (
-        echo [System] Installing Git in background...
+        echo [System] Installing Git in background (Please wait 10-20 seconds)...
         start /wait "" "%TEMP%\git_setup.exe" /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS
         del "%TEMP%\git_setup.exe" >nul 2>&1
-    ) else (
-        echo [System] Falling back to winget...
-        winget install Git.Git --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
     )
     call :RefreshPath
 )
@@ -53,8 +62,8 @@ if %errorlevel% neq 0 (
 :: Verify Git
 git --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Git installation failed. Please install Git manually:
-    echo https://git-scm.com/downloads
+    echo [ERROR] Git installation failed or was interrupted.
+    echo Please install Git manually: https://git-scm.com/downloads
     pause
     exit /b 1
 )
@@ -66,14 +75,17 @@ set FOLDER_NAME=AIToolLauncher
 if exist "core\launcher.py" (
     echo [1/2] Updating AI Tool Launcher...
     git pull
+    if !errorlevel! neq 0 (
+        echo [WARN] Update skipped. Launching current version...
+    )
     echo [2/2] Launching AI Tool Launcher...
     start pythonw core\launcher.py
     exit /b 0
 )
 
 if not exist "%FOLDER_NAME%" (
-    echo [1/2] Downloading AI Tool Launcher from GitHub...
-    git clone %REPO_URL% %FOLDER_NAME%
+    echo [1/2] Downloading AI Tool Launcher from GitHub (progress below)...
+    git clone --progress %REPO_URL% %FOLDER_NAME%
     if !errorlevel! neq 0 (
         echo [ERROR] Git clone failed. Please check internet connection.
         pause
