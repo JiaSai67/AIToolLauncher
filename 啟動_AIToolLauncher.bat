@@ -11,15 +11,15 @@ echo.
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [System] Python not found. Installing Python 3.11 automatically...
-    winget install Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
-    if !errorlevel! neq 0 (
-        echo [System] Downloading Python official installer...
-        powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile('https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe', [System.IO.Path]::GetTempPath() + 'python_setup.exe')"
-        if exist "%TEMP%\python_setup.exe" (
-            echo [System] Installing Python quietly...
-            "%TEMP%\python_setup.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
-            del "%TEMP%\python_setup.exe" >nul 2>&1
-        )
+    echo [System] Downloading Python official installer (Please wait)...
+    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $wc = New-Object System.Net.WebClient; $wc.DownloadFile('https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe', [System.IO.Path]::GetTempPath() + 'python_setup.exe')"
+    if exist "%TEMP%\python_setup.exe" (
+        echo [System] Installing Python in background...
+        start /wait "" "%TEMP%\python_setup.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
+        del "%TEMP%\python_setup.exe" >nul 2>&1
+    ) else (
+        echo [System] Falling back to winget...
+        winget install Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
     )
     call :RefreshPath
 )
@@ -37,15 +37,15 @@ if %errorlevel% neq 0 (
 git --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [System] Git not found. Installing Git automatically...
-    winget install Git.Git --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
-    if !errorlevel! neq 0 (
-        echo [System] Downloading Git installer from GitHub...
-        powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile('https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe', [System.IO.Path]::GetTempPath() + 'git_setup.exe')"
-        if exist "%TEMP%\git_setup.exe" (
-            echo [System] Installing Git quietly. Please wait...
-            "%TEMP%\git_setup.exe" /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS
-            del "%TEMP%\git_setup.exe" >nul 2>&1
-        )
+    echo [System] Downloading Git installer (60MB, please wait a moment)...
+    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $wc = New-Object System.Net.WebClient; $wc.DownloadFile('https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe', [System.IO.Path]::GetTempPath() + 'git_setup.exe')"
+    if exist "%TEMP%\git_setup.exe" (
+        echo [System] Installing Git in background...
+        start /wait "" "%TEMP%\git_setup.exe" /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS
+        del "%TEMP%\git_setup.exe" >nul 2>&1
+    ) else (
+        echo [System] Falling back to winget...
+        winget install Git.Git --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
     )
     call :RefreshPath
 )
