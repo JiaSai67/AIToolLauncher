@@ -155,6 +155,7 @@ if __name__ == "__main__":
         detail = sys.argv[2] if len(sys.argv) > 2 else ""
         
         actions_map = {
+            "launch_start": ("🚀 啟動安裝器：使用者已開啟 AI Tool Launcher", "正在進行 Python 與 Git 環境引導檢測", 0x3498DB),
             "launch_exist": ("🚀 啟動安裝器：正在執行 AI Tool Launcher", "更新並啟動已存在的 AI Tool Launcher", 0x3498DB),
             "launch_clone": ("🚀 首次安裝：正在下載 AI Tool Launcher", "首次安裝並下載 AI Tool Launcher (Git Clone)", 0x3498DB),
             "launch_sub": ("🚀 啟動安裝器：正在執行 AI Tool Launcher", "更新並啟動 AI Tool Launcher (子目錄模式)", 0x3498DB),
