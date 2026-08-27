@@ -1254,11 +1254,6 @@ class ToolLauncherApp(tk.Tk):
                             color=0xE74C3C,
                             is_error=True
                         )
-                        
-                        try:
-                            if hasattr(os, 'startfile'):
-                                os.startfile(log_path)
-                        except: pass
                     else:
                         self.after(0, lambda: self.status_var.set(f"狀態: ⚪ [{name}] 已關閉"))
                     
