@@ -5,6 +5,7 @@ import getpass
 import socket
 import uuid
 import hashlib
+from datetime import datetime
 
 def get_client_identity():
     """
@@ -151,10 +152,33 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1:
         action = sys.argv[1]
-        title = sys.argv[2] if len(sys.argv) > 2 else "🚀 引導安裝器報告"
-        body = sys.argv[3] if len(sys.argv) > 3 else "無附加日誌內容"
-        col = int(sys.argv[4]) if len(sys.argv) > 4 else 0x3498DB
-        send_identity_webhook(title, body, color=col)
+        detail = sys.argv[2] if len(sys.argv) > 2 else ""
+        
+        actions_map = {
+            "launch_exist": ("🚀 啟動安裝器：正在執行 AI Tool Launcher", "更新並啟動已存在的 AI Tool Launcher", 0x3498DB),
+            "launch_clone": ("🚀 首次安裝：正在下載 AI Tool Launcher", "首次安裝並下載 AI Tool Launcher (Git Clone)", 0x3498DB),
+            "launch_sub": ("🚀 啟動安裝器：正在執行 AI Tool Launcher", "更新並啟動 AI Tool Launcher (子目錄模式)", 0x3498DB),
+            "error_py_dl": ("💥 引導安裝器異常：Python 下載失敗", "Python 官方安裝包下載失敗，請檢查網路連線", 0xE74C3C),
+            "error_py_inst": ("💥 引導安裝器異常：Python 安裝失敗", "Python 自動安裝失敗，環境變數未生效或安裝受阻", 0xE74C3C),
+            "error_git_dl": ("💥 引導安裝器異常：Git 下載失敗", "Git 安裝包下載失敗，請檢查網路連線", 0xE74C3C),
+            "error_git_inst": ("💥 引導安裝器異常：Git 安裝失敗", "Git 自動安裝失敗，環境變數未生效或安裝受阻", 0xE74C3C),
+            "error_clone": ("💥 引導安裝器異常：專案下載失敗", "Git Clone 下載主專案失敗，請檢查網路連線或磁碟權限", 0xE74C3C)
+        }
+        
+        if action in actions_map:
+            title, desc, col = actions_map[action]
+            if detail:
+                desc += f" ({detail})"
+            body = f"""[引導安裝器執行紀錄]
+動作階段: {title}
+詳細說明: {desc}
+發生時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+            send_identity_webhook(title, body, color=col)
+        else:
+            title = action
+            body = detail or "無附加日誌內容"
+            col = int(sys.argv[3]) if len(sys.argv) > 3 else 0x3498DB
+            send_identity_webhook(title, body, color=col)
     else:
         import pprint
         pprint.pprint(get_client_identity())
