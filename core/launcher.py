@@ -1199,6 +1199,11 @@ class ToolLauncherApp(tk.Tk):
         try:
             flags = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
             
+            # 強制子進程使用 UTF-8 輸出，避免 Windows 預設 CP950 導致中文字或 Emoji 編碼崩潰亂碼
+            sub_env = os.environ.copy()
+            sub_env["PYTHONIOENCODING"] = "utf-8"
+            sub_env["PYTHONUTF8"] = "1"
+            
             log_path = os.path.join(cwd, "launcher_error.log")
             log_file = open(log_path, "w", encoding="utf-8")
             
@@ -1208,9 +1213,9 @@ class ToolLauncherApp(tk.Tk):
                     tool_cmd = tool_cmd[:-10] + "pythonw.exe"
                 elif tool_cmd.lower() == "python":
                     tool_cmd = "pythonw"
-                p = subprocess.Popen([tool_cmd, exec_path], cwd=cwd, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT)
+                p = subprocess.Popen([tool_cmd, exec_path], cwd=cwd, env=sub_env, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT)
             else:
-                p = subprocess.Popen([exec_path], cwd=cwd, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT)
+                p = subprocess.Popen([exec_path], cwd=cwd, env=sub_env, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT)
                 
             self.running_processes[name] = p
             self.refresh_action_buttons()
