@@ -9,6 +9,7 @@ import urllib.request
 import threading
 import shutil
 import re
+import traceback
 import importlib.metadata
 try:
     from core.theme_utils import get_theme_colors
@@ -20,7 +21,7 @@ try:
 except ModuleNotFoundError:
     from identity_manager import get_client_identity
 
-VERSION = "1.0.44"
+VERSION = "1.0.45"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -33,12 +34,13 @@ REGISTRY_FILE = os.path.join(APPDATA_DIR, "registry.json")
 CLOUD_TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CloudTools")
 DISCORD_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1540376553479999560/BlC_i3U0dEDp_qDVD9JlSxdkEpBw6-b9WGuuXa-xf4wE-EL6ob_ZmYNZ0EUR3RHwzXCl"
 
-def send_discord_report(title, log_body, color=0xE74C3C, is_error=True):
+def send_discord_report(title, log_body, color=0xE74C3C, is_error=True, sync=False):
     """
-    全自動非同步 Discord Webhook 回報引擎
+    全自動 Discord Webhook 回報引擎
     1. 支援大頭貼與顯示名稱呈現
     2. 全資訊整合至統一程式碼塊 (One-Click Copy for Agent)
     3. 自動分段 (Multi-message Chunks) 避免超過 Discord 2000 字元上限
+    4. 支援同步 (sync=True) 確保致命崩潰退出前 100% 成功發出
     """
     def _task():
         try:
@@ -47,7 +49,6 @@ def send_discord_report(title, log_body, color=0xE74C3C, is_error=True):
             avatar = identity.get("avatar_url") or "https://raw.githubusercontent.com/JiaSai67/AIToolLauncher/main/resources/icon.png"
             author_tag = f"{identity['display_name']} (@{identity['username']})" if identity['username'] != "N/A" else identity['formatted_identity']
             
-            # 分割超長日誌（每段最多 1700 字元，保留 Markdown 格式空間）
             MAX_CHUNK = 1700
             chunks = []
             if len(log_body) <= MAX_CHUNK:
@@ -90,7 +91,46 @@ def send_discord_report(title, log_body, color=0xE74C3C, is_error=True):
         except Exception:
             pass
             
-    threading.Thread(target=_task, daemon=True).start()
+    if sync:
+        _task()
+    else:
+        threading.Thread(target=_task, daemon=True).start()
+
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    """
+    大廳主程序全域未捕捉異常攔截器
+    當 AIToolLauncher 本身發生崩潰時，100% 同步發送錯誤日誌至 Discord Webhook
+    """
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+        
+    tb_lines = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    report_body = f"""[AIToolLauncher 大廳主程式崩潰日誌]
+專案名稱: AIToolLauncher (主啟動器)
+執行版本: v{VERSION}
+執行檔案: {os.path.abspath(__file__)}
+工作目錄: {os.getcwd()}
+發生時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+-------------------- 完整崩潰日誌 (Traceback) --------------------
+{tb_lines.strip()}"""
+
+    send_discord_report(
+        title="💥 大廳核心崩潰：AIToolLauncher 發生未預期異常",
+        log_body=report_body,
+        color=0xE74C3C,
+        is_error=True,
+        sync=True
+    )
+    sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+sys.excepthook = global_exception_handler
+if hasattr(threading, 'excepthook'):
+    def thread_exception_handler(args):
+        global_exception_handler(args.exc_type, args.exc_value, args.exc_traceback)
+    threading.excepthook = thread_exception_handler
+
 os.makedirs(APPDATA_DIR, exist_ok=True)
 os.makedirs(CLOUD_TOOLS_DIR, exist_ok=True)
 
