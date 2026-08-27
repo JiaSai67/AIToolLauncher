@@ -15,7 +15,12 @@ try:
 except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
-VERSION = "1.0.42"
+try:
+    from core.identity_manager import get_client_identity
+except ModuleNotFoundError:
+    from identity_manager import get_client_identity
+
+VERSION = "1.0.43"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -23,10 +28,52 @@ else:
     PYTHON_CMD = sys.executable
 
 APPDATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "config")
-os.makedirs(APPDATA_DIR, exist_ok=True)
-REGISTRY_FILE = os.path.join(APPDATA_DIR, "registry.json")
 ENV_CACHE_FILE = os.path.join(APPDATA_DIR, "env_cache.json")
+REGISTRY_FILE = os.path.join(APPDATA_DIR, "registry.json")
 CLOUD_TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CloudTools")
+DISCORD_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1540376553479999560/BlC_i3U0dEDp_qDVD9JlSxdkEpBw6-b9WGuuXa-xf4wE-EL6ob_ZmYNZ0EUR3RHwzXCl"
+
+def send_discord_report(title, description, fields=None, color=0xE74C3C, is_error=True):
+    """
+    全自動非同步 Discord Webhook 回報引擎
+    """
+    def _task():
+        try:
+            identity = get_client_identity()
+            user_title = f"{identity['display_name']} (@{identity['username']})" if identity['username'] != "N/A" else identity['formatted_identity']
+            
+            embed_fields = [
+                {"name": "👤 使用者身分", "value": user_title, "inline": True},
+                {"name": "💻 電腦設備", "value": f"`{identity['pc_user']}@{identity['pc_host']}` (#{identity['device_uid']})", "inline": True},
+                {"name": "🆔 Discord ID", "value": f"`{identity['user_id']}`" if identity['user_id'] != "N/A" else "無", "inline": True}
+            ]
+            if fields:
+                embed_fields.extend(fields)
+                
+            payload = {
+                "username": "AI Tool Launcher 監控中心",
+                "avatar_url": identity.get("avatar_url") or "https://raw.githubusercontent.com/JiaSai67/AIToolLauncher/main/resources/icon.png",
+                "embeds": [{
+                    "title": title,
+                    "description": description[:1800],
+                    "color": color,
+                    "fields": embed_fields,
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "footer": {"text": f"AIToolLauncher v{VERSION} 監控防護"}
+                }]
+            }
+            
+            req = urllib.request.Request(
+                DISCORD_WEBHOOK_URL,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
+            )
+            urllib.request.urlopen(req, timeout=8)
+        except Exception:
+            pass
+            
+    threading.Thread(target=_task, daemon=True).start()
+os.makedirs(APPDATA_DIR, exist_ok=True)
 os.makedirs(CLOUD_TOOLS_DIR, exist_ok=True)
 
 
@@ -476,13 +523,19 @@ class ToolLauncherApp(tk.Tk):
         
         info_frame = ttk.Frame(frame)
         info_frame.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(info_frame, text="Python 路徑:").grid(row=0, column=0, sticky=tk.W)
-        ttk.Label(info_frame, text=sys.executable, foreground=self.colors.link).grid(row=0, column=1, sticky=tk.W, padx=10)
         
-        ttk.Label(info_frame, text="Python 版本:").grid(row=1, column=0, sticky=tk.W)
-        ttk.Label(info_frame, text=sys.version.split(' ')[0], foreground=self.colors.link).grid(row=1, column=1, sticky=tk.W, padx=10)
+        identity = get_client_identity()
+        user_disp = f"{identity['display_name']} (@{identity['username']})" if identity['username'] != "N/A" else identity['formatted_identity']
+        ttk.Label(info_frame, text="客戶端身分:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(info_frame, text=f"👤 {user_disp}  [硬體碼: #{identity['device_uid']}]", foreground=self.colors.link).grid(row=0, column=1, sticky=tk.W, padx=10)
         
-        ttk.Button(info_frame, text="🔄 重新掃描", command=self.update_env_tab).grid(row=0, column=2, rowspan=2, padx=20)
+        ttk.Label(info_frame, text="Python 路徑:").grid(row=1, column=0, sticky=tk.W)
+        ttk.Label(info_frame, text=sys.executable, foreground=self.colors.text_dim).grid(row=1, column=1, sticky=tk.W, padx=10)
+        
+        ttk.Label(info_frame, text="Python 版本:").grid(row=2, column=0, sticky=tk.W)
+        ttk.Label(info_frame, text=sys.version.split(' ')[0], foreground=self.colors.text_dim).grid(row=2, column=1, sticky=tk.W, padx=10)
+        
+        ttk.Button(info_frame, text="🔄 重新掃描", command=self.update_env_tab).grid(row=0, column=2, rowspan=3, padx=20)
         
         ttk.Button(frame, text="💀 終極自爆：清除 Python 與 Git 環境", style="Stop.TButton", command=self.nuke_environment).pack(anchor=tk.E, pady=(0, 10))
         
@@ -603,20 +656,28 @@ class ToolLauncherApp(tk.Tk):
         self.local_feedback_text.config(state=tk.DISABLED)
         
         def send_task():
-            import urllib.request
-            import urllib.parse
-            
-            url = "https://docs.google.com/forms/d/e/1FAIpQLSfM5yQr_DqRjjVdn2nj8i_Zo7Ng2KGla2o3H_-NjJIUYrIAMg/formResponse"
-            data = {
-                "entry.1929074167": project_name,
-                "entry.1125158425": fb_type,
-                "entry.155668426": content
-            }
-            
             try:
-                encoded_data = urllib.parse.urlencode(data).encode("utf-8")
-                req = urllib.request.Request(url, data=encoded_data)
-                urllib.request.urlopen(req, timeout=5)
+                type_colors = {
+                    "BUG": 0xE74C3C,      # 紅色
+                    "建議": 0x3498DB,     # 藍色
+                    "其他": 0x9B59B6      # 紫色
+                }
+                type_emoji = {
+                    "BUG": "🐛 BUG 回報",
+                    "建議": "💡 功能建議",
+                    "其他": "🤔 其他意見"
+                }
+                
+                send_discord_report(
+                    title=f"📬 使用者意見回饋 [{fb_type}]",
+                    description=f"**專案名稱：** `{project_name}`\n**回饋類別：** {type_emoji.get(fb_type, fb_type)}\n\n**回饋內容：**\n{content}",
+                    fields=[
+                        {"name": "📦 目標專案", "value": f"`{project_name}`", "inline": True},
+                        {"name": "🏷️ 回饋類型", "value": fb_type, "inline": True}
+                    ],
+                    color=type_colors.get(fb_type, 0x3498DB),
+                    is_error=(fb_type == "BUG")
+                )
                 
                 self.after(0, lambda: self.local_feedback_status.config(text=f"狀態: ✅ 已成功發送針對 [{project_name}] 的回饋！", foreground="#00CC6A"))
                 self.after(0, lambda: self.local_feedback_text.delete("1.0", tk.END))
@@ -735,9 +796,27 @@ class ToolLauncherApp(tk.Tk):
                     with open(log_file_path, "w", encoding="utf-8") as f:
                         f.write(full_log)
                     self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 下載失敗 (詳細紀錄已儲存至 log)"))
+                    
+                    # 📡 自動向 Discord Webhook 發送 Clone 失敗報告
+                    send_discord_report(
+                        title=f"📥 Git Clone 失敗：{repo['name']}",
+                        description=f"從雲端下載專案失敗。\n\n**錯誤紀錄：**\n```text\n{full_log[-1000:].strip()}\n```",
+                        fields=[
+                            {"name": "📦 雲端倉庫", "value": f"`{repo['name']}`", "inline": True},
+                            {"name": "🔗 網址", "value": clone_url, "inline": False}
+                        ],
+                        color=0xE67E22,
+                        is_error=True
+                    )
+                    
                     self.after(0, lambda: messagebox.showerror("下載失敗", f"Git Clone 失敗！\n\n錯誤訊息：\n{full_log[-400:]}\n\n完整日誌已儲存於：\n{log_file_path}"))
             except Exception as e:
                 self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 下載失敗 (請確認已安裝 git): {e}"))
+                send_discord_report(
+                    title=f"📥 Git Clone 例外異常：{repo['name']}",
+                    description=f"下載過程發生未預期異常：\n```text\n{str(e)}\n```",
+                    color=0xE74C3C
+                )
                 self.after(0, lambda: messagebox.showerror("下載失敗", f"下載過程發生未預期的異常：\n{e}"))
             finally:
                 self.after(0, self.refresh_cloud_action_buttons)
@@ -771,9 +850,27 @@ class ToolLauncherApp(tk.Tk):
                     with open(log_file_path, "w", encoding="utf-8") as f:
                         f.write(full_log)
                     self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 更新失敗 (詳細紀錄已儲存至 log)"))
+                    
+                    # 📡 自動向 Discord Webhook 發送 Pull 失敗報告
+                    send_discord_report(
+                        title=f"🔄 Git Pull 失敗：{repo['name']}",
+                        description=f"雲端專案更新拉取失敗。\n\n**錯誤紀錄：**\n```text\n{full_log[-1000:].strip()}\n```",
+                        fields=[
+                            {"name": "📦 雲端倉庫", "value": f"`{repo['name']}`", "inline": True},
+                            {"name": "📂 本地路徑", "value": f"`{target_dir}`", "inline": False}
+                        ],
+                        color=0xE67E22,
+                        is_error=True
+                    )
+                    
                     self.after(0, lambda: messagebox.showerror("更新失敗", f"Git Pull 失敗！\n\n錯誤訊息：\n{full_log[-400:]}\n\n完整日誌已儲存於：\n{log_file_path}"))
             except Exception as e:
                 self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 更新失敗: {e}"))
+                send_discord_report(
+                    title=f"🔄 Git Pull 例外異常：{repo['name']}",
+                    description=f"更新過程發生未預期異常：\n```text\n{str(e)}\n```",
+                    color=0xE74C3C
+                )
                 self.after(0, lambda: messagebox.showerror("更新失敗", f"更新過程發生未預期的異常：\n{e}"))
             finally:
                 self.after(0, self.refresh_cloud_action_buttons)
@@ -1028,6 +1125,25 @@ class ToolLauncherApp(tk.Tk):
                     
                     if p.returncode != 0:
                         self.after(0, lambda: self.status_var.set(f"狀態: ⚠️ 部分套件安裝失敗，已盡力補齊 (詳見 pip_install.log)"))
+                        
+                        # 📡 自動向 Discord Webhook 發送依賴安裝失敗報告
+                        try:
+                            with open(pip_log_path, 'r', encoding='utf-8', errors='replace') as pf:
+                                pip_err_snippet = pf.read()[-1000:]
+                        except:
+                            pip_err_snippet = "無法讀取 pip_install.log"
+                            
+                        send_discord_report(
+                            title=f"📦 依賴套件安裝異常：{name}",
+                            description=f"專案在執行 `pip install` 自動補齊套件時發生錯誤。\n\n**安裝日誌擷取：**\n```text\n{pip_err_snippet.strip()}\n```",
+                            fields=[
+                                {"name": "📦 專案名稱", "value": f"`{name}`", "inline": True},
+                                {"name": "📄 requirements.txt", "value": f"`{req_path}`", "inline": False}
+                            ],
+                            color=0xF39C12,
+                            is_error=True
+                        )
+                        
                         self.after(0, lambda: messagebox.showwarning("套件安裝警告", f"部分套件安裝失敗（例如缺少系統依賴）。\n\n已啟動容錯機制，將跳過損壞的套件並強行補齊其他套件。\n請查看 {pip_log_path} 了解詳情。"))
                 
                 self.after(0, lambda: self._do_launch(name, exec_path, cwd))
@@ -1067,16 +1183,31 @@ class ToolLauncherApp(tk.Tk):
                     self.after(0, self.refresh_action_buttons)
                     
                     has_error = False
+                    log_text = ""
                     if os.path.exists(log_path) and os.path.getsize(log_path) > 0:
                         try:
                             with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
-                                content = f.read().lower()
+                                log_text = f.read()
+                                content = log_text.lower()
                                 if "traceback" in content or "exception" in content or "error" in content:
                                     has_error = True
                         except: pass
                     
                     if has_error:
                         self.after(0, lambda: self.status_var.set(f"狀態: 🔴 [{name}] 異常關閉 (請查看 launcher_error.log)"))
+                        
+                        # 📡 自動向 Discord Webhook 發送異常崩潰報告
+                        send_discord_report(
+                            title=f"💥 專案執行崩潰：{name}",
+                            description=f"專案在執行期間異常中斷退出。\n\n**崩潰日誌擷取 (Traceback)：**\n```python\n{log_text[-1200:].strip()}\n```",
+                            fields=[
+                                {"name": "📦 專案名稱", "value": f"`{name}`", "inline": True},
+                                {"name": "📂 執行路徑", "value": f"`{exec_path}`", "inline": False}
+                            ],
+                            color=0xE74C3C,
+                            is_error=True
+                        )
+                        
                         try:
                             if hasattr(os, 'startfile'):
                                 os.startfile(log_path)
