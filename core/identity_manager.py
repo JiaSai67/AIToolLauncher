@@ -102,6 +102,59 @@ def get_client_identity():
         "formatted_identity": f"{display_title} ({sub_tag})"
     }
 
+def send_identity_webhook(title, log_body, color=0x3498DB):
+    """
+    通用身分 Webhook 發送函式 (支援 BAT 腳本與外部直接呼叫)
+    """
+    import urllib.request
+    import json
+    from datetime import datetime
+    
+    webhook_url = "https://ptb.discord.com/api/webhooks/1540376553479999560/BlC_i3U0dEDp_qDVD9JlSxdkEpBw6-b9WGuuXa-xf4wE-EL6ob_ZmYNZ0EUR3RHwzXCl"
+    try:
+        identity = get_client_identity()
+        sender_name = identity['display_name']
+        avatar = identity.get("avatar_url") or "https://raw.githubusercontent.com/JiaSai67/AIToolLauncher/main/resources/icon.png"
+        author_tag = f"{identity['display_name']} (@{identity['username']})" if identity['username'] != "N/A" else identity['formatted_identity']
+        
+        embed_obj = {
+            "author": {
+                "name": author_tag,
+                "icon_url": avatar
+            },
+            "title": title,
+            "description": f"```text\n{log_body.strip()}\n```",
+            "color": color,
+            "thumbnail": {
+                "url": avatar
+            },
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "footer": {"text": "AIToolLauncher 引導安裝器"}
+        }
+        
+        payload = {
+            "username": sender_name,
+            "avatar_url": avatar,
+            "embeds": [embed_obj]
+        }
+        
+        req = urllib.request.Request(
+            webhook_url,
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
+        )
+        urllib.request.urlopen(req, timeout=8)
+    except Exception:
+        pass
+
 if __name__ == "__main__":
-    import pprint
-    pprint.pprint(get_client_identity())
+    import sys
+    if len(sys.argv) > 1:
+        action = sys.argv[1]
+        title = sys.argv[2] if len(sys.argv) > 2 else "🚀 引導安裝器報告"
+        body = sys.argv[3] if len(sys.argv) > 3 else "無附加日誌內容"
+        col = int(sys.argv[4]) if len(sys.argv) > 4 else 0x3498DB
+        send_identity_webhook(title, body, color=col)
+    else:
+        import pprint
+        pprint.pprint(get_client_identity())
