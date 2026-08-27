@@ -20,7 +20,7 @@ try:
 except ModuleNotFoundError:
     from identity_manager import get_client_identity
 
-VERSION = "1.0.43"
+VERSION = "1.0.44"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -36,31 +36,36 @@ DISCORD_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1540376553479999560/
 def send_discord_report(title, description, fields=None, color=0xE74C3C, is_error=True):
     """
     全自動非同步 Discord Webhook 回報引擎
+    直接使用使用者 Discord 顯示名稱與頭像發送，介面乾淨俐落
     """
     def _task():
         try:
             identity = get_client_identity()
-            user_title = f"{identity['display_name']} (@{identity['username']})" if identity['username'] != "N/A" else identity['formatted_identity']
+            sender_name = identity['display_name']
+            avatar = identity.get("avatar_url") or "https://raw.githubusercontent.com/JiaSai67/AIToolLauncher/main/resources/icon.png"
+            author_tag = f"{identity['display_name']} (@{identity['username']})" if identity['username'] != "N/A" else identity['formatted_identity']
             
-            embed_fields = [
-                {"name": "👤 使用者身分", "value": user_title, "inline": True},
-                {"name": "💻 電腦設備", "value": f"`{identity['pc_user']}@{identity['pc_host']}` (#{identity['device_uid']})", "inline": True},
-                {"name": "🆔 Discord ID", "value": f"`{identity['user_id']}`" if identity['user_id'] != "N/A" else "無", "inline": True}
-            ]
+            embed_obj = {
+                "author": {
+                    "name": author_tag,
+                    "icon_url": avatar
+                },
+                "title": title,
+                "description": description[:1800],
+                "color": color,
+                "thumbnail": {
+                    "url": avatar
+                },
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "footer": {"text": f"AIToolLauncher v{VERSION} 監控防護"}
+            }
             if fields:
-                embed_fields.extend(fields)
+                embed_obj["fields"] = fields
                 
             payload = {
-                "username": "AI Tool Launcher 監控中心",
-                "avatar_url": identity.get("avatar_url") or "https://raw.githubusercontent.com/JiaSai67/AIToolLauncher/main/resources/icon.png",
-                "embeds": [{
-                    "title": title,
-                    "description": description[:1800],
-                    "color": color,
-                    "fields": embed_fields,
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
-                    "footer": {"text": f"AIToolLauncher v{VERSION} 監控防護"}
-                }]
+                "username": sender_name,
+                "avatar_url": avatar,
+                "embeds": [embed_obj]
             }
             
             req = urllib.request.Request(
