@@ -337,6 +337,12 @@ class ToolLauncherApp(tk.Tk):
         self.setup_cloud_tab()
         self.setup_env_tab()
         
+    def set_status_message(self, text, color=None):
+        self.status_var.set(text)
+        if hasattr(self, 'lbl_status'):
+            fg = color if color else self.colors.text_main
+            self.lbl_status.configure(foreground=fg)
+        
     def check_launcher_update(self):
         def task():
             try:
@@ -506,7 +512,8 @@ class ToolLauncherApp(tk.Tk):
         self.action_frame.pack(fill=tk.X, pady=(10, 20))
         
         self.status_var = tk.StringVar(value="狀態: 待命")
-        ttk.Label(self.right_frame, textvariable=self.status_var, font=('Microsoft JhengHei', 10, 'bold')).pack(anchor=tk.W, pady=(0, 20))
+        self.lbl_status = ttk.Label(self.right_frame, textvariable=self.status_var, font=('Microsoft JhengHei', 10, 'bold'))
+        self.lbl_status.pack(anchor=tk.W, pady=(0, 20))
         
         tk.Frame(self.right_frame, bg=self.colors.border, height=1).pack(fill=tk.X, pady=10)
         
@@ -1227,11 +1234,11 @@ class ToolLauncherApp(tk.Tk):
                             is_error=True
                         )
                         
-                        self.after(0, lambda: messagebox.showwarning("套件安裝警告", f"部分套件安裝失敗（例如缺少系統依賴）。\n\n已啟動容錯機制，將跳過損壞的套件並強行補齊其他套件。\n請查看 {pip_log_path} 了解詳情。"))
+                        self.after(0, lambda: messagebox.showwarning("套件安裝警告", f"部分套件安裝失敗（例如缺少系統依賴）。\n\n已啟動容錯機制，將跳過損壞的套件並強行補齊其他套件。\n若專案無法正常運作，請通知 xiaoan0000 (JiaSai) 對此錯誤進行排查。"))
                 
                 self.after(0, lambda: self._do_launch(name, exec_path, cwd))
             except Exception as e:
-                self.after(0, lambda: self.status_var.set(f"狀態: 🔴 前置作業失敗: {e}"))
+                self.after(0, lambda: self.set_status_message(f"狀態: 🔴 前置作業失敗 (請通知 xiaoan0000 (JiaSai) 進行排查): {e}", color="#FF4D4F"))
                 
         threading.Thread(target=pre_launch_setup, daemon=True).start()
 
@@ -1282,7 +1289,7 @@ class ToolLauncherApp(tk.Tk):
                         except: pass
                     
                     if has_error:
-                        self.after(0, lambda: self.status_var.set(f"狀態: 🔴 [{name}] 異常關閉 (請查看 launcher_error.log)"))
+                        self.after(0, lambda: self.set_status_message(f"狀態: 🔴 [{name}] 異常關閉 (請通知 xiaoan0000 (JiaSai) 對此錯誤進行排查)", color="#FF4D4F"))
                         
                         # 📡 自動向 Discord Webhook 發送異常崩潰報告 (整合為一鍵複製代碼塊)
                         report_body = f"""[專案崩潰日誌報告]
@@ -1300,12 +1307,12 @@ class ToolLauncherApp(tk.Tk):
                             is_error=True
                         )
                     else:
-                        self.after(0, lambda: self.status_var.set(f"狀態: ⚪ [{name}] 已關閉"))
+                        self.after(0, lambda: self.set_status_message(f"狀態: ⚪ [{name}] 已關閉"))
                     
             threading.Thread(target=wait_for_exit, daemon=True).start()
             
         except Exception as e:
-            self.status_var.set(f"狀態: 🔴 啟動失敗 ({e})")
+            self.set_status_message(f"狀態: 🔴 啟動失敗 ({e})", color="#FF4D4F")
             
     def stop_tool(self, name):
         if name in self.running_processes:
