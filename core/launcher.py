@@ -21,7 +21,7 @@ try:
 except ModuleNotFoundError:
     from identity_manager import get_client_identity, get_webhook_url, check_blacklist, enforce_blacklist_destruction
 
-VERSION = "1.0.47"
+VERSION = "1.0.48"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -248,6 +248,47 @@ class EnvCacheManager:
             
         threading.Thread(target=fetch, daemon=True).start()
 
+def parse_linkme(target_dir):
+    linkme = os.path.join(target_dir, "linkme.bat")
+    if not os.path.exists(linkme):
+        return None
+    content = ""
+    for enc in ['utf-8', 'utf-8-sig', 'cp950', 'big5', 'gbk']:
+        try:
+            with open(linkme, 'r', encoding=enc) as f:
+                content = f.read()
+                break
+        except Exception:
+            continue
+    if not content:
+        return None
+        
+    name = None
+    desc = ""
+    exec_file = None
+    
+    m_name = re.search(r'set\s+"?PROJECT_NAME=([^"\r\n]+)"?', content, re.IGNORECASE)
+    if m_name:
+        name = m_name.group(1).strip()
+        
+    m_desc = re.search(r'set\s+"?PROJECT_DESC=([^"\r\n]+)"?', content, re.IGNORECASE)
+    if m_desc:
+        desc = m_desc.group(1).strip()
+        
+    m_exec = re.search(r'set\s+"?EXEC_FILE=(?:%CWD%\\|\.\/|\.\\|)([^"\r\n]+)"?', content, re.IGNORECASE)
+    if m_exec:
+        rel_exec = m_exec.group(1).strip()
+        if os.path.isabs(rel_exec):
+            exec_file = rel_exec
+        else:
+            exec_file = os.path.normpath(os.path.join(target_dir, rel_exec))
+            
+    return {
+        "name": name,
+        "description": desc,
+        "executable": exec_file
+    }
+
 def load_registry():
     if os.path.exists(REGISTRY_FILE):
         try:
@@ -447,15 +488,18 @@ class ToolLauncherApp(tk.Tk):
         threading.Thread(target=check_all, daemon=True).start()
 
     def update_tool(self, name):
-        tool = next((t for t in self.registry["tools"] if t["name"] == name), None)
+        tool = next((t for t in self.registry.get("tools", []) if t.get("name") == name), None)
         if not tool: return
         cwd = tool.get("working_dir")
         
+        if not cwd or not os.path.exists(os.path.join(cwd, ".git")):
+            return messagebox.showerror("錯誤", "此專案並非由 Git 倉庫下載 (找不到 .git)，無法使用重新拉取功能。")
+            
         was_running = name in self.running_processes
         if was_running:
             self.stop_tool(name)
             
-        self.status_var.set(f"狀態: ⏳ 正在更新 {name}...")
+        self.status_var.set(f"狀態: ⏳ 正在重新拉取 {name}...")
         for w in self.action_frame.winfo_children(): w.state(['disabled'])
         
         def pull_task():
@@ -469,7 +513,17 @@ class ToolLauncherApp(tk.Tk):
                 if p.returncode == 0:
                     self.updates_available[name] = False
                     
-                    # 更新後順便檢查並自動補齊套件
+                    # 1. 重新讀取 linkme.bat 覆寫本地註冊設定
+                    info = parse_linkme(cwd)
+                    if info and info.get("executable") and os.path.exists(info["executable"]):
+                        tool["executable"] = info["executable"]
+                        if info.get("description"):
+                            tool["description"] = info["description"]
+                        if info.get("name") and info["name"] != name:
+                            tool["name"] = info["name"]
+                        save_registry(self.registry)
+                    
+                    # 2. 更新後順便檢查並自動補齊套件
                     req_path = os.path.join(cwd, "requirements.txt")
                     if os.path.exists(req_path):
                         self.after(0, lambda: self.status_var.set("狀態: ⏳ 正在檢查是否有新套件需要安裝..."))
@@ -497,19 +551,19 @@ class ToolLauncherApp(tk.Tk):
                             self.env_cache.check_local(req_path)
                             
                     if was_running:
-                        self.after(0, lambda: self.status_var.set("狀態: 🟢 更新與套件補齊完成！正在自動重啟..."))
+                        self.after(0, lambda: self.status_var.set("狀態: 🟢 重新拉取與套件補齊完成！正在自動重啟..."))
                         self.after(0, lambda: self.launch_tool(name))
                     else:
-                        self.after(0, lambda: self.status_var.set("狀態: 🟢 更新與套件補齊完成！可以啟動專案了。"))
+                        self.after(0, lambda: self.status_var.set("狀態: 🟢 重新拉取與套件補齊完成！可以啟動專案了。"))
                 else:
-                    self.after(0, lambda: self.status_var.set("狀態: 🔴 更新失敗 (請檢查網路或衝突)"))
+                    self.after(0, lambda: self.status_var.set("狀態: 🔴 重新拉取失敗 (請檢查網路或衝突)"))
             except Exception as e:
-                self.after(0, lambda: self.status_var.set(f"狀態: 🔴 更新錯誤: {e}"))
+                self.after(0, lambda: self.status_var.set(f"狀態: 🔴 重新拉取錯誤: {e}"))
             finally:
+                self.after(0, self.refresh_list)
                 self.after(0, self.refresh_action_buttons)
                 
         threading.Thread(target=pull_task, daemon=True).start()
-
     def setup_local_tab(self):
         left_frame = ttk.Frame(self.tab_local)
         left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
@@ -725,8 +779,12 @@ class ToolLauncherApp(tk.Tk):
         selection = self.listbox.curselection()
         if not selection:
             return messagebox.showwarning("提示", "請先選擇一個專案再提交意見！")
+        idx = selection[0]
+        if idx >= len(self.displayed_items):
+            return messagebox.showwarning("提示", "請先選擇一個專案再提交意見！")
             
-        project_name = self.registry["tools"][selection[0]]["name"]
+        item = self.displayed_items[idx]
+        project_name = item["name"]
         fb_type = self.feedback_type_var.get()
         content = self.local_feedback_text.get("1.0", tk.END).strip()
         
@@ -772,7 +830,6 @@ class ToolLauncherApp(tk.Tk):
                 self.after(0, lambda: self.local_feedback_text.config(state=tk.NORMAL))
             
         threading.Thread(target=send_task, daemon=True).start()
-
     def update_env_tab(self):
         self.env_manager.refresh()
         self.env_text.config(state=tk.NORMAL)
@@ -943,26 +1000,12 @@ class ToolLauncherApp(tk.Tk):
         desc = repo.get('description', '')
         exec_file = None
         
-        linkme = os.path.join(target_dir, "linkme.bat")
-        if os.path.exists(linkme):
-            content = None
-            try:
-                with open(linkme, 'r', encoding='utf-8') as f: content = f.read()
-            except UnicodeDecodeError:
-                try:
-                    with open(linkme, 'r', encoding='big5') as f: content = f.read()
-                except: pass
-                    
-            if content:
-                try:
-                    name_match = re.search(r'set\s+PROJECT_NAME=(.+)', content)
-                    desc_match = re.search(r'set\s+PROJECT_DESC=(.+)', content)
-                    exec_match = re.search(r'set\s+EXEC_FILE=%CWD%\\(.+)', content)
-                    if name_match and exec_match:
-                        name = name_match.group(1).strip()
-                        if desc_match and not desc: desc = desc_match.group(1).strip()
-                        exec_file = os.path.join(target_dir, exec_match.group(1).strip())
-                except: pass
+        info = parse_linkme(target_dir)
+        if info:
+            if info.get("name"): name = info["name"]
+            if info.get("description") and not desc: desc = info["description"]
+            if info.get("executable") and os.path.exists(info["executable"]):
+                exec_file = info["executable"]
             
         if not exec_file:
             exec_file = next((os.path.join(target_dir, c) for c in ["start.bat", "main.py", "app.py"] if os.path.exists(os.path.join(target_dir, c))), None)
@@ -977,6 +1020,22 @@ class ToolLauncherApp(tk.Tk):
             save_registry(self.registry)
             self.refresh_list()
             self.status_var.set(f"狀態: 🟢 下載並自動註冊成功！")
+            
+            # 下載後順便檢查並自動補齊套件
+            req_path = os.path.join(target_dir, "requirements.txt")
+            if os.path.exists(req_path):
+                status, missing = self.env_cache.check_local(req_path)
+                if status == "needs_install":
+                    self.after(0, lambda: self.status_var.set(f"狀態: 📦 正在為 {name} 安裝所需套件..."))
+                    pip_cmd = PYTHON_CMD.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in PYTHON_CMD.lower() else "python"
+                    flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                    pip_log_path = os.path.join(target_dir, "pip_install.log")
+                    with open(pip_log_path, "w", encoding="utf-8") as log_file:
+                        subprocess.run([pip_cmd, "-m", "pip", "install", "-r", req_path], cwd=target_dir, creationflags=flags, stdout=log_file, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                    self.env_manager.refresh()
+                    self.after(0, self.update_env_tab)
+                    self.env_cache.check_local(req_path)
+                    self.after(0, lambda: self.status_var.set(f"狀態: 🟢 {name} 下載、註冊與套件安裝皆已完成！"))
 
     def check_project_update_async(self, name, cwd):
         cloud_prefix = os.path.abspath(CLOUD_TOOLS_DIR)
@@ -1027,44 +1086,15 @@ class ToolLauncherApp(tk.Tk):
         item = self.displayed_items[idx]
         name = item["name"]
         
-        # 情況 A：若為未安裝的雲端專案，直接執行下載安裝
+        # 情況 A：若為未安裝的雲端專案，直接執行下載安裝 (git clone)
         if not item["is_installed"]:
             return self.install_cloud_repo(item["data"])
             
-        # 情況 B：若為已安裝專案，執行重新拉取與覆蓋重裝
-        tool = item["data"]
-        cwd = tool.get("working_dir")
-        
-        if not cwd or not os.path.exists(os.path.join(cwd, ".git")):
-            return messagebox.showerror("錯誤", "此專案並非由 Git 倉庫下載 (找不到 .git)，無法使用重新拉取重裝功能。")
-            
-        if not messagebox.askyesno("確認", f"確定要重新拉取 / 重裝 '{name}' 嗎？\n警告：這將會清除專案快取並從雲端重新拉取最新版本！"):
+        # 情況 B：若為已安裝專案，提示確認後執行重新拉取與更新 (git pull)
+        if not messagebox.askyesno("確認重新拉取", f"確定要重新拉取 / 重裝 '{name}' 嗎？\n\n這將會從 GitHub 重新同步最新代碼、覆寫註冊設定並自動補齊依賴套件。"):
             return
             
-        self.stop_tool(name)
-        
-        def reinstall_task():
-            self.after(0, lambda: self.status_var.set(f"狀態: ⏳ 正在從雲端重新拉取 (git pull)..."))
-            try:
-                flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                p = subprocess.Popen(["git", "pull"], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
-                for line in p.stdout:
-                    l = line.strip()
-                    if l: self.after(0, lambda text=l[:50]: self.status_var.set(f"狀態: 🔄 {text}"))
-                p.wait()
-                
-                if p.returncode == 0:
-                    req_path = os.path.join(cwd, "requirements.txt")
-                    if os.path.exists(req_path):
-                        self.env_cache.check_local(req_path)
-                    self.after(0, lambda: self.status_var.set("狀態: 🟢 重新拉取與更新完成！可以啟動專案了。"))
-                    self.after(0, self.refresh_action_buttons)
-                else:
-                    self.after(0, lambda: self.status_var.set("狀態: 🔴 重新拉取失敗 (請檢查網路連線)"))
-            except Exception as e:
-                self.after(0, lambda: self.status_var.set(f"狀態: 🔴 重新拉取錯誤: {e}"))
-                
-        threading.Thread(target=reinstall_task, daemon=True).start()
+        self.update_tool(name)
             
     def delete_selected_tool(self):
         selection = self.listbox.curselection()
@@ -1078,25 +1108,28 @@ class ToolLauncherApp(tk.Tk):
             return messagebox.showinfo("提示", f"專案 '{name}' 尚未安裝，無需刪除檔案。")
             
         tool = item["data"]
-        if messagebox.askyesno("確認", f"確定要徹底刪除 '{name}' 嗎？\n警告：這將會把整個專案資料夾從硬碟中移除！"):
+        if messagebox.askyesno("確認刪除", f"確定要徹底刪除 '{name}' 嗎？\n\n警告：這將會清除專案硬碟資料夾並將專案重置為「未下載」狀態！"):
             self.stop_tool(name)
             cwd = tool.get("working_dir")
             
+            # 1. 從註冊表中移除
             self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != name]
             save_registry(self.registry)
-            self.refresh_list()
-            for widget in self.action_frame.winfo_children(): widget.destroy()
-            self.lbl_name.config(text="請在左側選擇一個專案來查看細節")
-            self.status_var.set("狀態: 待命")
-            self.lbl_desc.config(text="")
             
+            # 2. 清除硬碟資料夾
             if cwd and os.path.isdir(cwd):
                 try:
                     flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
                     subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", cwd], creationflags=flags)
                 except Exception as e:
                     messagebox.showwarning("警告", f"移除檔案時發生錯誤，部分檔案可能仍留存: {e}")
-
+            
+            # 3. 清理右側面板並重新整理清單
+            for widget in self.action_frame.winfo_children(): widget.destroy()
+            self.lbl_name.config(text="請在左側選擇一個專案來查看細節")
+            self.status_var.set("狀態: 待命")
+            self.lbl_desc.config(text="")
+            self.refresh_list()
     def launch_tool(self, name):
         tool = next((t for t in self.registry["tools"] if t["name"] == name), None)
         if not tool: return
