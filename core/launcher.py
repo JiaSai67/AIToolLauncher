@@ -21,7 +21,7 @@ try:
 except ModuleNotFoundError:
     from identity_manager import get_client_identity, get_webhook_url, check_blacklist, enforce_blacklist_destruction
 
-VERSION = "1.0.50"
+VERSION = "1.0.51"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -443,7 +443,8 @@ class ToolLauncherApp(tk.Tk):
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
                 cwd = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                p = subprocess.Popen(["git", "pull"], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                subprocess.run(["git", "fetch", "origin", "main"], cwd=cwd, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                p = subprocess.Popen(["git", "reset", "--hard", "origin/main"], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
                 p.wait()
                 if p.returncode == 0:
                     self.after(0, self.launcher_update_frame.pack_forget)
@@ -522,11 +523,24 @@ class ToolLauncherApp(tk.Tk):
         def pull_task():
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                p = subprocess.Popen(["git", "pull"], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                # 1. 抓取遠端最新 commits
+                subprocess.run(["git", "fetch", "origin"], cwd=cwd, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # 2. 強制重置對齊遠端分支 (防止本地檔案被修改導致 merge 衝突失敗)
+                p = subprocess.Popen(["git", "reset", "--hard", "origin/main"], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
                 for line in p.stdout:
                     l = line.strip()
                     if l: self.after(0, lambda text=l[:50]: self.status_var.set(f"狀態: 🔄 {text}"))
                 p.wait()
+                
+                # 若 main 分支不存在，fallback 至標準 git pull
+                if p.returncode != 0:
+                    p = subprocess.Popen(["git", "pull"], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                    for line in p.stdout:
+                        l = line.strip()
+                        if l: self.after(0, lambda text=l[:50]: self.status_var.set(f"狀態: 🔄 {text}"))
+                    p.wait()
+                    
                 if p.returncode == 0:
                     self.updates_available[name] = False
                     
