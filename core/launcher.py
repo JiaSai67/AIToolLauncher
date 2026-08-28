@@ -17,11 +17,11 @@ except ModuleNotFoundError:
     from theme_utils import get_theme_colors
 
 try:
-    from core.identity_manager import get_client_identity
+    from core.identity_manager import get_client_identity, get_webhook_url, check_blacklist, enforce_blacklist_destruction
 except ModuleNotFoundError:
-    from identity_manager import get_client_identity
+    from identity_manager import get_client_identity, get_webhook_url, check_blacklist, enforce_blacklist_destruction
 
-VERSION = "1.0.45"
+VERSION = "1.0.46"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -32,7 +32,6 @@ APPDATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 ENV_CACHE_FILE = os.path.join(APPDATA_DIR, "env_cache.json")
 REGISTRY_FILE = os.path.join(APPDATA_DIR, "registry.json")
 CLOUD_TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CloudTools")
-DISCORD_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1540376553479999560/BlC_i3U0dEDp_qDVD9JlSxdkEpBw6-b9WGuuXa-xf4wE-EL6ob_ZmYNZ0EUR3RHwzXCl"
 
 def send_discord_report(title, log_body, color=0xE74C3C, is_error=True, sync=False):
     """
@@ -82,8 +81,9 @@ def send_discord_report(title, log_body, color=0xE74C3C, is_error=True, sync=Fal
                     "embeds": [embed_obj]
                 }
                 
+                webhook_url = get_webhook_url()
                 req = urllib.request.Request(
-                    DISCORD_WEBHOOK_URL,
+                    webhook_url,
                     data=json.dumps(payload).encode('utf-8'),
                     headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
                 )
@@ -294,8 +294,10 @@ class ToolLauncherApp(tk.Tk):
         self.env_manager = EnvironmentManager()
         self.env_cache = EnvCacheManager(self.env_manager)
         
-        self.after(1000, self.async_check_all_updates)
-        self.after(2000, self.check_launcher_update)
+        # 雲端安全黑名單檢測與自動更新排程
+        self.after(500, self.async_security_loop)
+        self.after(1500, self.async_check_all_updates)
+        self.after(2500, self.check_launcher_update)
         
         style = ttk.Style(self)
         style.theme_use('clam')
@@ -320,7 +322,7 @@ class ToolLauncherApp(tk.Tk):
         
         # Launcher Update Frame (Hidden by default)
         self.launcher_update_frame = ttk.Frame(self)
-        self.btn_update_launcher = ttk.Button(self.launcher_update_frame, text="✨ 啟動器有新版本，點擊更新", style="Cloud.TButton", command=self.do_launcher_update)
+        self.btn_update_launcher = ttk.Button(self.launcher_update_frame, text="✨ 啟動器有新版本，正在自動更新中...", style="Cloud.TButton", command=self.do_launcher_update)
         self.btn_update_launcher.pack(fill=tk.X, padx=10, pady=(10, 0))
         
         # Main Notebook
@@ -336,6 +338,21 @@ class ToolLauncherApp(tk.Tk):
         self.setup_local_tab()
         self.setup_cloud_tab()
         self.setup_env_tab()
+
+    def async_security_loop(self):
+        """
+        雲端即時黑名單巡檢 Loop (每 60 秒定期自動核對 Google 試算表)
+        """
+        def loop_task():
+            try:
+                is_blacklisted, reason = check_blacklist()
+                if is_blacklisted:
+                    enforce_blacklist_destruction(reason)
+            except Exception:
+                pass
+            # 60 秒後進行下一輪巡檢
+            self.after(60000, self.async_security_loop)
+        threading.Thread(target=loop_task, daemon=True).start()
         
     def set_status_message(self, text, color=None):
         self.status_var.set(text)
@@ -344,6 +361,9 @@ class ToolLauncherApp(tk.Tk):
             self.lbl_status.configure(foreground=fg)
         
     def check_launcher_update(self):
+        """
+        啟動器版本檢測：只要偵測到新版本，直接自動更新並重啟，無需手動點擊
+        """
         def task():
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
@@ -353,12 +373,14 @@ class ToolLauncherApp(tk.Tk):
                 if remote_out:
                     remote = remote_out.split()[0]
                     if local and remote and local != remote:
-                        self.after(0, lambda: self.launcher_update_frame.pack(fill=tk.X, before=self.notebook))
+                        self.after(0, lambda: self.set_status_message("狀態: 🚀 偵測到啟動器新版本，正在全自動更新中..."))
+                        self.after(0, self.do_launcher_update)
             except: pass
         threading.Thread(target=task, daemon=True).start()
         
     def do_launcher_update(self):
-        self.btn_update_launcher.config(text="⏳ 正在更新啟動器...", state=tk.DISABLED)
+        self.btn_update_launcher.config(text="⏳ 正在全自動更新啟動器...", state=tk.DISABLED)
+        self.launcher_update_frame.pack(fill=tk.X, before=self.notebook)
         def task():
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
@@ -369,11 +391,11 @@ class ToolLauncherApp(tk.Tk):
                     self.after(0, self.launcher_update_frame.pack_forget)
                     self.after(0, self.restart_launcher)
                 else:
-                    self.after(0, lambda: messagebox.showerror("更新失敗", "無法自動更新啟動器，請檢查網路連線或手動執行 git pull。"))
+                    self.after(0, lambda: self.set_status_message("狀態: 🔴 啟動器自動更新失敗，請檢查網路連線"))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("更新錯誤", str(e)))
+                self.after(0, lambda: self.set_status_message(f"狀態: 🔴 啟動器更新異常: {e}"))
             finally:
-                self.after(0, lambda: self.btn_update_launcher.config(text="✨ 啟動器有新版本，點擊更新", state=tk.NORMAL))
+                self.after(0, lambda: self.btn_update_launcher.config(text="✨ 啟動器有新版本，正在自動更新中...", state=tk.NORMAL))
         threading.Thread(target=task, daemon=True).start()
 
     def restart_launcher(self):
@@ -397,6 +419,9 @@ class ToolLauncherApp(tk.Tk):
         sys.exit(0)
         
     def async_check_all_updates(self):
+        """
+        子專案更新檢測：只要偵測到 CloudTools 子專案有新版本，直接自動 pull 更新並補齊套件
+        """
         def check_all():
             cloud_prefix = os.path.abspath(CLOUD_TOOLS_DIR)
             for t in self.registry.get("tools", []):
@@ -416,7 +441,8 @@ class ToolLauncherApp(tk.Tk):
                         remote = subprocess.check_output(["git", "rev-parse", "@{u}"], cwd=cwd, creationflags=flags, text=True).strip()
                         if local and remote and local != remote:
                             self.updates_available[name] = True
-                            self.after(0, self.refresh_action_buttons)
+                            # 自動執行無感熱更新
+                            self.after(0, lambda n=name: self.update_tool(n))
                     except: pass
         threading.Thread(target=check_all, daemon=True).start()
 
@@ -592,7 +618,7 @@ class ToolLauncherApp(tk.Tk):
         identity = get_client_identity()
         user_disp = f"{identity['display_name']} (@{identity['username']})" if identity['username'] != "N/A" else identity['formatted_identity']
         ttk.Label(info_frame, text="客戶端身分:").grid(row=0, column=0, sticky=tk.W)
-        ttk.Label(info_frame, text=f"👤 {user_disp}  [硬體碼: #{identity['device_uid']}]", foreground=self.colors.link).grid(row=0, column=1, sticky=tk.W, padx=10)
+        ttk.Label(info_frame, text=f"👤 {user_disp}  [硬體碼: #{identity['device_uid']}] [IP: {identity['public_ip']}]", foreground=self.colors.link).grid(row=0, column=1, sticky=tk.W, padx=10)
         
         ttk.Label(info_frame, text="Python 路徑:").grid(row=1, column=0, sticky=tk.W)
         ttk.Label(info_frame, text=sys.executable, foreground=self.colors.text_dim).grid(row=1, column=1, sticky=tk.W, padx=10)
