@@ -21,7 +21,7 @@ try:
 except ModuleNotFoundError:
     from identity_manager import get_client_identity, get_webhook_url, check_blacklist, enforce_blacklist_destruction
 
-VERSION = "1.0.49"
+VERSION = "1.0.50"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -1076,10 +1076,8 @@ class ToolLauncherApp(tk.Tk):
                     remote = subprocess.check_output(["git", "rev-parse", "@{u}"], cwd=cwd, creationflags=flags, text=True).strip()
                     if local and remote and local != remote:
                         self.updates_available[name] = True
-                        
-                        selection = self.listbox.curselection()
-                        if selection and selection[0] < len(self.displayed_items) and self.displayed_items[selection[0]]["name"] == name:
-                            self.after(0, self.refresh_action_buttons)
+                        # 自動執行無感全自動熱更新，無需手動點擊按鈕
+                        self.after(0, lambda n=name: self.update_tool(n))
                 except: pass
         threading.Thread(target=check, daemon=True).start()
 
@@ -1099,8 +1097,6 @@ class ToolLauncherApp(tk.Tk):
             if self.status_var.get().startswith("狀態: 待命"): self.status_var.set("狀態: 🟢 執行中")
         else:
             ttk.Button(self.action_frame, text="🚀 啟動此專案", style="Launch.TButton", command=lambda: self.launch_tool(name)).pack(side=tk.LEFT)
-            if self.updates_available.get(name):
-                ttk.Button(self.action_frame, text="🌟 版本更新", style="Cloud.TButton", command=lambda: self.update_tool(name)).pack(side=tk.LEFT, padx=(10, 0))
                 
     def reinstall_selected_tool(self):
         selection = self.listbox.curselection()
