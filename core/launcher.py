@@ -21,7 +21,7 @@ try:
 except ModuleNotFoundError:
     from identity_manager import get_client_identity, get_webhook_url, check_blacklist, enforce_blacklist_destruction
 
-VERSION = "1.0.46"
+VERSION = "1.0.47"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -325,19 +325,19 @@ class ToolLauncherApp(tk.Tk):
         self.btn_update_launcher = ttk.Button(self.launcher_update_frame, text="✨ 啟動器有新版本，正在自動更新中...", style="Cloud.TButton", command=self.do_launcher_update)
         self.btn_update_launcher.pack(fill=tk.X, padx=10, pady=(10, 0))
         
-        # Main Notebook
+        # Main Notebook (融合本地與雲端為單一大廳)
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         self.tab_local = ttk.Frame(self.notebook)
-        self.tab_cloud = ttk.Frame(self.notebook)
         self.tab_env = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_local, text='💻 本地專案')
-        self.notebook.add(self.tab_cloud, text='☁️ GitHub 雲端專案')
+        self.notebook.add(self.tab_local, text='💻 AI 專案管理大廳')
         self.notebook.add(self.tab_env, text='⚙️ 環境報告')
         
+        self.cloud_repos = []
+        self.displayed_items = []
         self.setup_local_tab()
-        self.setup_cloud_tab()
         self.setup_env_tab()
+        self.fetch_cloud_repos_background()
 
     def async_security_loop(self):
         """
@@ -514,16 +514,26 @@ class ToolLauncherApp(tk.Tk):
         left_frame = ttk.Frame(self.tab_local)
         left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
         
-        ttk.Label(left_frame, text="已註冊的 AI 專案", font=('Microsoft JhengHei', 12, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+        header_frame = ttk.Frame(left_frame)
+        header_frame.pack(fill=tk.X, pady=(0, 5))
         
-        self.listbox = tk.Listbox(left_frame, width=30, font=('Microsoft JhengHei', 11), bg=self.colors.bg_card, fg=self.colors.text_main, selectbackground=self.colors.select_bg, relief=tk.FLAT, borderwidth=0, highlightthickness=1, highlightbackground=self.colors.bg_root, highlightcolor=self.colors.bg_root)
+        ttk.Label(header_frame, text="AI 專案總覽", font=('Microsoft JhengHei', 12, 'bold')).pack(side=tk.LEFT)
+        
+        self.project_filter_var = tk.StringVar(value="all")
+        ttk.Radiobutton(header_frame, text="全部", variable=self.project_filter_var, value="all", command=self.refresh_list).pack(side=tk.RIGHT)
+        ttk.Radiobutton(header_frame, text="未安裝", variable=self.project_filter_var, value="uninstalled", command=self.refresh_list).pack(side=tk.RIGHT, padx=(0, 4))
+        ttk.Radiobutton(header_frame, text="已安裝", variable=self.project_filter_var, value="installed", command=self.refresh_list).pack(side=tk.RIGHT, padx=(0, 4))
+        
+        self.listbox = tk.Listbox(left_frame, width=32, font=('Microsoft JhengHei', 11), bg=self.colors.bg_card, fg=self.colors.text_main, selectbackground=self.colors.select_bg, relief=tk.FLAT, borderwidth=0, highlightthickness=1, highlightbackground=self.colors.bg_root, highlightcolor=self.colors.bg_root)
         self.listbox.pack(fill=tk.Y, expand=True)
-        self.listbox.bind('<<ListboxSelect>>', self.on_select_local)
+        self.listbox.bind('<<ListboxSelect>>', self.on_select_project)
         
         btn_frame = ttk.Frame(left_frame)
         btn_frame.pack(fill=tk.X, pady=5)
-        ttk.Button(btn_frame, text="🔄 重新安裝", command=self.reinstall_tool).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        ttk.Button(btn_frame, text="🗑 刪除專案", command=self.delete_tool).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+        self.btn_left_reinstall = ttk.Button(btn_frame, text="🔄 重新拉取 / 重裝", command=self.reinstall_selected_tool)
+        self.btn_left_reinstall.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        self.btn_left_delete = ttk.Button(btn_frame, text="🗑 刪除專案", command=self.delete_selected_tool)
+        self.btn_left_delete.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
         
         self.right_frame = ttk.Frame(self.tab_local)
         self.right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -568,43 +578,23 @@ class ToolLauncherApp(tk.Tk):
         
         self.refresh_list()
 
-    def setup_cloud_tab(self):
-        left_frame = ttk.Frame(self.tab_cloud)
-        left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
-        
-        header_frame = ttk.Frame(left_frame)
-        header_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        ttk.Label(header_frame, text="JiaSai 小工具倉庫", font=('Microsoft JhengHei', 12, 'bold')).pack(side=tk.LEFT)
-        
-        self.cloud_filter_var = tk.StringVar(value="uninstalled")
-        ttk.Radiobutton(header_frame, text="全部", variable=self.cloud_filter_var, value="all", command=self.update_cloud_listbox).pack(side=tk.RIGHT)
-        ttk.Radiobutton(header_frame, text="未安裝", variable=self.cloud_filter_var, value="uninstalled", command=self.update_cloud_listbox).pack(side=tk.RIGHT, padx=(0, 5))
-        self.cloud_listbox = tk.Listbox(left_frame, width=30, font=('Microsoft JhengHei', 11), bg=self.colors.bg_card, fg=self.colors.text_main, selectbackground=self.colors.select_bg, relief=tk.FLAT, borderwidth=0, highlightthickness=1, highlightbackground=self.colors.bg_root, highlightcolor=self.colors.bg_root)
-        self.cloud_listbox.pack(fill=tk.Y, expand=True)
-        self.cloud_listbox.bind('<<ListboxSelect>>', self.on_select_cloud)
-        
-        btn_frame = ttk.Frame(left_frame)
-        btn_frame.pack(fill=tk.X, pady=5)
-        ttk.Button(btn_frame, text="🔄 重新整理", command=self.fetch_cloud_repos).pack(side=tk.LEFT, expand=True, fill=tk.X)
-        
-        self.cloud_right_frame = ttk.Frame(self.tab_cloud)
-        self.cloud_right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20, pady=20)
-        
-        self.lbl_cloud_name = ttk.Label(self.cloud_right_frame, text="正在讀取 GitHub 倉庫...", style="Title.TLabel")
-        self.lbl_cloud_name.pack(anchor=tk.W, pady=(0, 10))
-        
-        self.lbl_cloud_desc = tk.Label(self.cloud_right_frame, text="", bg=self.colors.bg_root, fg=self.colors.text_dim, font=('Microsoft JhengHei', 10), justify=tk.LEFT, wraplength=480)
-        self.lbl_cloud_desc.pack(anchor=tk.W, pady=(0, 20))
-        
-        self.cloud_action_frame = ttk.Frame(self.cloud_right_frame)
-        self.cloud_action_frame.pack(fill=tk.X, pady=(10, 20))
-        
-        self.cloud_status_var = tk.StringVar(value="狀態: 待命")
-        ttk.Label(self.cloud_right_frame, textvariable=self.cloud_status_var, font=('Microsoft JhengHei', 10, 'bold')).pack(anchor=tk.W)
-        
-        self.cloud_repos = []
-        self.fetch_cloud_repos()
+    def fetch_cloud_repos_background(self):
+        def fetch():
+            try:
+                url = "https://api.github.com/users/JiaSai67/repos"
+                req = urllib.request.Request(url)
+                req.add_header("Accept", "application/vnd.github.v3+json")
+                req.add_header("User-Agent", "AIToolLauncher")
+                
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    data = json.loads(response.read().decode('utf-8'))
+                
+                self.cloud_repos = [r for r in data if r['name'].lower() != 'aitoollauncher']
+                self.after(0, self.refresh_list)
+            except Exception:
+                pass
+                
+        threading.Thread(target=fetch, daemon=True).start()
 
     def setup_env_tab(self):
         frame = ttk.Frame(self.tab_env)
@@ -791,79 +781,102 @@ class ToolLauncherApp(tk.Tk):
         self.env_text.insert(tk.END, "\n".join(packages))
         self.env_text.config(state=tk.DISABLED)
 
-    # --- GitHub Logic ---
-    def fetch_cloud_repos(self):
-        self.cloud_listbox.delete(0, tk.END)
-        self.lbl_cloud_name.config(text="正在連線至 GitHub...")
-        self.cloud_status_var.set("狀態: ⏳ 正在抓取雲端倉庫清單...")
+    # --- Unified Dashboard Logic ---
+    def refresh_list(self):
+        self.listbox.delete(0, tk.END)
+        self.displayed_items = []
         
-        def fetch():
-            try:
-                url = "https://api.github.com/users/JiaSai67/repos"
-                req = urllib.request.Request(url)
-                req.add_header("Accept", "application/vnd.github.v3+json")
-                req.add_header("User-Agent", "AIToolLauncher")
-                
-                with urllib.request.urlopen(req) as response:
-                    data = json.loads(response.read().decode('utf-8'))
-                
-                self.cloud_repos = [r for r in data if r['name'].lower() != 'aitoollauncher']
-                self.after(0, self.update_cloud_listbox)
-            except Exception as e:
-                self.after(0, lambda: self.lbl_cloud_name.config(text="讀取失敗"))
-                self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 無法連線至 GitHub: {e}"))
-                
-        threading.Thread(target=fetch, daemon=True).start()
-
-    def update_cloud_listbox(self):
-        self.cloud_listbox.delete(0, tk.END)
-        filter_val = getattr(self, 'cloud_filter_var', tk.StringVar(value="all")).get()
+        filter_mode = getattr(self, 'project_filter_var', tk.StringVar(value="all")).get()
+        local_names = {t.get("name"): t for t in self.registry.get("tools", [])}
         
-        for repo in self.cloud_repos:
-            if filter_val == "uninstalled" and os.path.exists(os.path.join(CLOUD_TOOLS_DIR, repo['name'])):
+        # 1. 已安裝專案
+        for tool in self.registry.get("tools", []):
+            name = tool.get("name", "Unknown")
+            if filter_mode == "uninstalled":
                 continue
-            self.cloud_listbox.insert(tk.END, repo['name'])
-        self.lbl_cloud_name.config(text="請在左側選擇一個倉庫來安裝")
-        self.cloud_status_var.set("狀態: 🟢 GitHub 倉庫抓取完畢")
-
-    def on_select_cloud(self, event):
-        selection = self.cloud_listbox.curselection()
-        if not selection: return
-        
-        repo_name = self.cloud_listbox.get(selection[0])
-        repo = next((r for r in self.cloud_repos if r['name'] == repo_name), None)
-        if not repo: return
-        
-        self.lbl_cloud_name.config(text=repo['name'])
-        self.lbl_cloud_desc.config(text=repo.get('description', '無描述'))
-        for widget in self.cloud_action_frame.winfo_children(): widget.destroy()
+                
+            self.displayed_items.append({
+                "type": "local",
+                "name": name,
+                "data": tool,
+                "is_installed": True
+            })
+            self.listbox.insert(tk.END, f"🟢 {name}")
             
-        target_dir = os.path.join(CLOUD_TOOLS_DIR, repo['name'])
-        is_installed = os.path.exists(target_dir) and os.path.exists(os.path.join(target_dir, ".git"))
-        if is_installed:
-            ttk.Button(self.cloud_action_frame, text="🔄 重新拉取 (git pull)", style="Cloud.TButton", command=lambda: self.update_cloud_repo(repo)).pack(side=tk.LEFT, padx=(0, 10))
-            self.cloud_status_var.set("狀態: 🟢 此倉庫已安裝於本地")
+        # 2. 雲端未安裝專案
+        for repo in self.cloud_repos:
+            repo_name = repo['name']
+            target_dir = os.path.join(CLOUD_TOOLS_DIR, repo_name)
+            is_installed = (repo_name in local_names) or (os.path.exists(target_dir) and os.path.exists(os.path.join(target_dir, ".git")))
+            
+            if is_installed or filter_mode == "installed":
+                continue
+                
+            self.displayed_items.append({
+                "type": "cloud",
+                "name": repo_name,
+                "data": repo,
+                "is_installed": False
+            })
+            self.listbox.insert(tk.END, f"☁️ {repo_name} (未下載)")
+
+    def on_select_project(self, event):
+        selection = self.listbox.curselection()
+        if not selection: return
+        idx = selection[0]
+        if idx >= len(self.displayed_items): return
+        
+        item = self.displayed_items[idx]
+        name = item["name"]
+        
+        if item["is_installed"]:
+            tool = item["data"]
+            self.lbl_name.config(text=name)
+            self.lbl_desc.config(text=tool.get("description", "已安裝的本地 AI 專案"))
+            
+            cwd = tool.get("working_dir", "-")
+            req_path = os.path.join(cwd, "requirements.txt")
+            status, missing = self.env_cache.check_local(req_path)
+            
+            if status == "ready":
+                self.status_var.set("狀態: 🟢 待命 (環境已相容，可秒開)")
+            elif status == "needs_install":
+                missing_str = ", ".join(missing[:3])
+                if len(missing) > 3: missing_str += "..."
+                self.status_var.set(f"狀態: ⚪ 待命 (啟動時將自動安裝: {missing_str})")
+            elif status == "no_req":
+                self.status_var.set("狀態: 🟢 待命 (無 requirements.txt 依賴)")
+            else:
+                self.status_var.set("狀態: 待命")
+                
+            self.refresh_action_buttons()
+            self.check_project_update_async(name, cwd)
         else:
-            ttk.Button(self.cloud_action_frame, text="📥 下載並安裝 (git clone)", style="Launch.TButton", command=lambda: self.install_cloud_repo(repo)).pack(side=tk.LEFT)
+            repo = item["data"]
+            self.lbl_name.config(text=f"{name} (雲端專案)")
+            self.lbl_desc.config(text=repo.get('description', '尚未下載至本地的雲端 AI 專案'))
+            
+            for widget in self.action_frame.winfo_children(): widget.destroy()
+            ttk.Button(self.action_frame, text="📥 下載並安裝 (git clone)", style="Launch.TButton", command=lambda: self.install_cloud_repo(repo)).pack(side=tk.LEFT)
             
             def cloud_cb(status):
                 if status == "ready":
-                    self.after(0, lambda: self.cloud_status_var.set("狀態: 🟢 可下載 (本地環境已相容，下載後可秒開)"))
+                    self.after(0, lambda: self.status_var.set("狀態: 🟢 可下載 (本地環境已相容，下載後可秒開)"))
                 elif status == "needs_install":
-                    self.after(0, lambda: self.cloud_status_var.set("狀態: 🟡 可下載 (包含新套件，啟動前將自動安裝)"))
+                    self.after(0, lambda: self.status_var.set("狀態: 🟡 可下載 (包含新套件，啟動前將自動安裝)"))
                 elif status == "no_req":
-                    self.after(0, lambda: self.cloud_status_var.set("狀態: 🟢 可下載 (無 requirements.txt 依賴)"))
+                    self.after(0, lambda: self.status_var.set("狀態: 🟢 可下載 (無 requirements.txt 依賴)"))
                 else:
-                    self.after(0, lambda: self.cloud_status_var.set("狀態: ⚪ 可下載 (無快取或檢查失敗)"))
+                    self.after(0, lambda: self.status_var.set("狀態: ⚪ 可下載 (無快取或檢查失敗)"))
                     
-            self.cloud_status_var.set("狀態: 🔍 正在從雲端分析環境需求...")
+            self.status_var.set("狀態: 🔍 正在從雲端分析環境需求...")
             self.env_cache.check_cloud_async(repo, cloud_cb)
 
     def install_cloud_repo(self, repo):
         target_dir = os.path.join(CLOUD_TOOLS_DIR, repo['name'])
         clone_url = repo['clone_url']
-        self.cloud_status_var.set(f"狀態: ⏳ 正在下載...")
-        for w in self.cloud_action_frame.winfo_children(): w.state(['disabled'])
+        self.status_var.set(f"狀態: ⏳ 正在下載...")
+        for w in self.action_frame.winfo_children(): w.state(['disabled'])
         
         def clone_task():
             log_lines = []
@@ -880,7 +893,7 @@ class ToolLauncherApp(tk.Tk):
                 for line in p.stdout:
                     l = line.strip()
                     log_lines.append(line)
-                    if l: self.after(0, lambda text=l[:60]: self.cloud_status_var.set(f"狀態: 📥 下載中... {text}"))
+                    if l: self.after(0, lambda text=l[:60]: self.status_var.set(f"狀態: 📥 下載中... {text}"))
                 p.wait()
                 
                 full_log = "".join(log_lines)
@@ -890,9 +903,8 @@ class ToolLauncherApp(tk.Tk):
                     log_file_path = os.path.join(APPDATA_DIR, f"git_clone_error_{repo['name']}.log")
                     with open(log_file_path, "w", encoding="utf-8") as f:
                         f.write(full_log)
-                    self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 下載失敗 (詳細紀錄已儲存至 log)"))
+                    self.after(0, lambda: self.status_var.set(f"狀態: 🔴 下載失敗 (詳細紀錄已儲存至 log)"))
                     
-                    # 📡 自動向 Discord Webhook 發送 Clone 失敗報告
                     report_body = f"""[Git Clone 失敗報告]
 專案名稱: {repo['name']}
 倉庫網址: {clone_url}
@@ -907,10 +919,9 @@ class ToolLauncherApp(tk.Tk):
                         color=0xE67E22,
                         is_error=True
                     )
-                    
                     self.after(0, lambda: messagebox.showerror("下載失敗", f"Git Clone 失敗！\n\n錯誤訊息：\n{full_log[-400:]}\n\n完整日誌已儲存於：\n{log_file_path}"))
             except Exception as e:
-                self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 下載失敗 (請確認已安裝 git): {e}"))
+                self.after(0, lambda: self.status_var.set(f"狀態: 🔴 下載失敗 (請確認已安裝 git): {e}"))
                 report_body = f"""[Git Clone 例外異常]
 專案名稱: {repo['name']}
 倉庫網址: {clone_url}
@@ -923,79 +934,15 @@ class ToolLauncherApp(tk.Tk):
                 )
                 self.after(0, lambda: messagebox.showerror("下載失敗", f"下載過程發生未預期的異常：\n{e}"))
             finally:
-                self.after(0, self.refresh_cloud_action_buttons)
+                self.after(0, self.refresh_list)
         threading.Thread(target=clone_task, daemon=True).start()
 
-    def update_cloud_repo(self, repo):
-        target_dir = os.path.join(CLOUD_TOOLS_DIR, repo['name'])
-        self.cloud_status_var.set(f"狀態: ⏳ 正在更新...")
-        for w in self.cloud_action_frame.winfo_children(): w.state(['disabled'])
-        
-        def pull_task():
-            log_lines = []
-            try:
-                flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                if not os.path.exists(os.path.join(target_dir, ".git")):
-                    self.after(0, lambda: self.install_cloud_repo(repo))
-                    return
-                p = subprocess.Popen(["git", "pull"], cwd=target_dir, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
-                for line in p.stdout:
-                    l = line.strip()
-                    log_lines.append(line)
-                    if l: self.after(0, lambda text=l[:60]: self.cloud_status_var.set(f"狀態: 🔄 更新中... {text}"))
-                p.wait()
-                
-                full_log = "".join(log_lines)
-                if p.returncode == 0:
-                    self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🟢 更新成功"))
-                    self.after(0, lambda: self.auto_register_cloned_repo(repo, target_dir))
-                else:
-                    log_file_path = os.path.join(APPDATA_DIR, f"git_pull_error_{repo['name']}.log")
-                    with open(log_file_path, "w", encoding="utf-8") as f:
-                        f.write(full_log)
-                    self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 更新失敗 (詳細紀錄已儲存至 log)"))
-                    
-                    # 📡 自動向 Discord Webhook 發送 Pull 失敗報告
-                    report_body = f"""[Git Pull 失敗報告]
-專案名稱: {repo['name']}
-本地路徑: {target_dir}
-發生時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
--------------------- 完整日誌 --------------------
-{full_log.strip()}"""
-                    send_discord_report(
-                        title=f"🔄 Git Pull 失敗：{repo['name']}",
-                        log_body=report_body,
-                        color=0xE67E22,
-                        is_error=True
-                    )
-                    
-                    self.after(0, lambda: messagebox.showerror("更新失敗", f"Git Pull 失敗！\n\n錯誤訊息：\n{full_log[-400:]}\n\n完整日誌已儲存於：\n{log_file_path}"))
-            except Exception as e:
-                self.after(0, lambda: self.cloud_status_var.set(f"狀態: 🔴 更新失敗: {e}"))
-                report_body = f"""[Git Pull 例外異常]
-專案名稱: {repo['name']}
-本地路徑: {target_dir}
-異常訊息: {str(e)}
-發生時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
-                send_discord_report(
-                    title=f"🔄 Git Pull 例外異常：{repo['name']}",
-                    log_body=report_body,
-                    color=0xE74C3C
-                )
-                self.after(0, lambda: messagebox.showerror("更新失敗", f"更新過程發生未預期的異常：\n{e}"))
-            finally:
-                self.after(0, self.refresh_cloud_action_buttons)
-        threading.Thread(target=pull_task, daemon=True).start()
-
     def auto_register_cloned_repo(self, repo, target_dir):
-        self.cloud_status_var.set("狀態: 🟢 下載完成，正在嘗試自動註冊...")
-        
+        self.status_var.set("狀態: 🟢 下載完成，正在嘗試自動註冊...")
         name = repo['name']
         desc = repo.get('description', '')
         exec_file = None
         
-        # 1. 如果有 linkme.bat，優先讀取裡面的設定
         linkme = os.path.join(target_dir, "linkme.bat")
         if os.path.exists(linkme):
             content = None
@@ -1004,27 +951,24 @@ class ToolLauncherApp(tk.Tk):
             except UnicodeDecodeError:
                 try:
                     with open(linkme, 'r', encoding='big5') as f: content = f.read()
-                except:
-                    pass
+                except: pass
                     
             if content:
                 try:
                     name_match = re.search(r'set\s+PROJECT_NAME=(.+)', content)
                     desc_match = re.search(r'set\s+PROJECT_DESC=(.+)', content)
                     exec_match = re.search(r'set\s+EXEC_FILE=%CWD%\\(.+)', content)
-                    
                     if name_match and exec_match:
                         name = name_match.group(1).strip()
                         if desc_match and not desc: desc = desc_match.group(1).strip()
                         exec_file = os.path.join(target_dir, exec_match.group(1).strip())
                 except: pass
             
-        # 2. 如果沒有 linkme.bat 或是讀取失敗，就尋找常見的啟動檔
         if not exec_file:
             exec_file = next((os.path.join(target_dir, c) for c in ["start.bat", "main.py", "app.py"] if os.path.exists(os.path.join(target_dir, c))), None)
             
         if not exec_file:
-            messagebox.showinfo("手動註冊", "下載完成！但找不到標準的啟動檔 (如 start.bat 或 main.py)。\n請到「本地專案」分頁手動註冊。")
+            messagebox.showinfo("手動註冊", "下載完成！但找不到標準的啟動檔 (如 start.bat 或 main.py)。")
         else:
             self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != name]
             self.registry.setdefault("tools", []).append({
@@ -1032,16 +976,9 @@ class ToolLauncherApp(tk.Tk):
             })
             save_registry(self.registry)
             self.refresh_list()
-            self.cloud_status_var.set(f"狀態: 🟢 下載並自動註冊成功！")
-        self.refresh_cloud_action_buttons()
-
-    # --- Local Tab Methods ---
-    def refresh_list(self):
-        self.listbox.delete(0, tk.END)
-        for t in self.registry.get("tools", []): self.listbox.insert(tk.END, t.get("name", "Unknown"))
+            self.status_var.set(f"狀態: 🟢 下載並自動註冊成功！")
 
     def check_project_update_async(self, name, cwd):
-        # 只有存放在 CloudTools 目錄下的專案才檢查更新
         cloud_prefix = os.path.abspath(CLOUD_TOOLS_DIR)
         if not os.path.abspath(cwd).startswith(cloud_prefix):
             return
@@ -1057,46 +994,22 @@ class ToolLauncherApp(tk.Tk):
                     if local and remote and local != remote:
                         self.updates_available[name] = True
                         
-                        # Only refresh UI if the user is still looking at this project
                         selection = self.listbox.curselection()
-                        if selection and self.registry["tools"][selection[0]]["name"] == name:
+                        if selection and selection[0] < len(self.displayed_items) and self.displayed_items[selection[0]]["name"] == name:
                             self.after(0, self.refresh_action_buttons)
                 except: pass
         threading.Thread(target=check, daemon=True).start()
 
-    def on_select_local(self, event):
-        selection = self.listbox.curselection()
-        if not selection: return
-        index = selection[0]
-        tool = self.registry["tools"][index]
-        self.lbl_name.config(text=tool.get("name", ""))
-        self.lbl_desc.config(text=tool.get("description", ""))
-        
-        cwd = tool.get("working_dir", "-")
-        
-        req_path = os.path.join(cwd, "requirements.txt")
-        status, missing = self.env_cache.check_local(req_path)
-        
-        if status == "ready":
-            self.status_var.set("狀態: 🟢 待命 (環境已相容，可秒開)")
-        elif status == "needs_install":
-            missing_str = ", ".join(missing[:3])
-            if len(missing) > 3: missing_str += "..."
-            self.status_var.set(f"狀態: ⚪ 待命 (啟動時將自動安裝: {missing_str})")
-        elif status == "no_req":
-            self.status_var.set("狀態: 🟢 待命 (無 requirements.txt 依賴)")
-        else:
-            self.status_var.set("狀態: 待命")
-            
-        self.refresh_action_buttons()
-        self.check_project_update_async(tool.get("name"), cwd)
-        
     def refresh_action_buttons(self):
         for widget in self.action_frame.winfo_children(): widget.destroy()
         selection = self.listbox.curselection()
         if not selection: return
-        name = self.registry["tools"][selection[0]]["name"]
+        idx = selection[0]
+        if idx >= len(self.displayed_items): return
+        item = self.displayed_items[idx]
+        if not item["is_installed"]: return
         
+        name = item["name"]
         if name in self.running_processes:
             ttk.Button(self.action_frame, text="🛑 關閉專案", style="Stop.TButton", command=lambda: self.stop_tool(name)).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(self.action_frame, text="🔄 重啟專案", style="Restart.TButton", command=lambda: self.restart_tool(name)).pack(side=tk.LEFT)
@@ -1106,71 +1019,70 @@ class ToolLauncherApp(tk.Tk):
             if self.updates_available.get(name):
                 ttk.Button(self.action_frame, text="🌟 版本更新", style="Cloud.TButton", command=lambda: self.update_tool(name)).pack(side=tk.LEFT, padx=(10, 0))
                 
-    def reinstall_tool(self):
+    def reinstall_selected_tool(self):
         selection = self.listbox.curselection()
         if not selection: return messagebox.showwarning("警告", "請先選擇一個專案")
-        index = selection[0]
-        tool = self.registry["tools"][index]
-        name = tool["name"]
+        idx = selection[0]
+        if idx >= len(self.displayed_items): return
+        item = self.displayed_items[idx]
+        name = item["name"]
+        
+        # 情況 A：若為未安裝的雲端專案，直接執行下載安裝
+        if not item["is_installed"]:
+            return self.install_cloud_repo(item["data"])
+            
+        # 情況 B：若為已安裝專案，執行重新拉取與覆蓋重裝
+        tool = item["data"]
         cwd = tool.get("working_dir")
         
         if not cwd or not os.path.exists(os.path.join(cwd, ".git")):
-            return messagebox.showerror("錯誤", "此專案並非由 Git 倉庫下載 (找不到 .git)，無法使用重新安裝功能。")
+            return messagebox.showerror("錯誤", "此專案並非由 Git 倉庫下載 (找不到 .git)，無法使用重新拉取重裝功能。")
             
-        if not messagebox.askyesno("確認", f"確定要重新安裝 '{name}' 嗎？\n警告：這將會把整個專案資料夾刪除並重新從雲端下載！所有您未提交的修改都會消失！"):
+        if not messagebox.askyesno("確認", f"確定要重新拉取 / 重裝 '{name}' 嗎？\n警告：這將會清除專案快取並從雲端重新拉取最新版本！"):
             return
             
         self.stop_tool(name)
         
         def reinstall_task():
-            self.after(0, lambda: self.status_var.set(f"狀態: ⏳ 正在取得遠端網址..."))
+            self.after(0, lambda: self.status_var.set(f"狀態: ⏳ 正在從雲端重新拉取 (git pull)..."))
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                remote_url = subprocess.check_output(["git", "config", "--get", "remote.origin.url"], cwd=cwd, creationflags=flags, text=True).strip()
-                if not remote_url:
-                    self.after(0, lambda: messagebox.showerror("錯誤", "找不到 git remote url，無法重新安裝！"))
-                    self.after(0, lambda: self.status_var.set(f"狀態: 🔴 重新安裝失敗"))
-                    return
-                    
-                self.after(0, lambda: self.status_var.set(f"狀態: 🗑️ 正在刪除舊資料夾..."))
-                parent_dir = os.path.dirname(cwd)
-                folder_name = os.path.basename(cwd)
-                
-                # Windows shutil.rmtree ignores read-only files (like git objects), so we use rmdir /s /q
-                subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", cwd], creationflags=flags)
-                if os.path.exists(cwd):
-                    self.after(0, lambda: messagebox.showerror("錯誤", "舊資料夾無法完全刪除，可能檔案正在被佔用。請手動刪除後再試。"))
-                    return
-                    
-                self.after(0, lambda: self.status_var.set(f"狀態: 📥 正在重新下載 (clone)..."))
-                p = subprocess.Popen(["git", "clone", remote_url, folder_name], cwd=parent_dir, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                p = subprocess.Popen(["git", "pull"], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
                 for line in p.stdout:
                     l = line.strip()
                     if l: self.after(0, lambda text=l[:50]: self.status_var.set(f"狀態: 🔄 {text}"))
                 p.wait()
                 
                 if p.returncode == 0:
-                    self.after(0, lambda: self.status_var.set("狀態: 🟢 重新安裝完成！可以啟動專案了。"))
+                    req_path = os.path.join(cwd, "requirements.txt")
+                    if os.path.exists(req_path):
+                        self.env_cache.check_local(req_path)
+                    self.after(0, lambda: self.status_var.set("狀態: 🟢 重新拉取與更新完成！可以啟動專案了。"))
                     self.after(0, self.refresh_action_buttons)
                 else:
-                    self.after(0, lambda: self.status_var.set("狀態: 🔴 重新安裝失敗 (請檢查網路連線)"))
+                    self.after(0, lambda: self.status_var.set("狀態: 🔴 重新拉取失敗 (請檢查網路連線)"))
             except Exception as e:
-                self.after(0, lambda: self.status_var.set(f"狀態: 🔴 重新安裝錯誤: {e}"))
+                self.after(0, lambda: self.status_var.set(f"狀態: 🔴 重新拉取錯誤: {e}"))
                 
         threading.Thread(target=reinstall_task, daemon=True).start()
             
-    def delete_tool(self):
+    def delete_selected_tool(self):
         selection = self.listbox.curselection()
         if not selection: return messagebox.showwarning("警告", "請先選擇一個專案")
-        index = selection[0]
-        tool = self.registry["tools"][index]
-        name = tool["name"]
+        idx = selection[0]
+        if idx >= len(self.displayed_items): return
+        item = self.displayed_items[idx]
+        name = item["name"]
         
+        if not item["is_installed"]:
+            return messagebox.showinfo("提示", f"專案 '{name}' 尚未安裝，無需刪除檔案。")
+            
+        tool = item["data"]
         if messagebox.askyesno("確認", f"確定要徹底刪除 '{name}' 嗎？\n警告：這將會把整個專案資料夾從硬碟中移除！"):
             self.stop_tool(name)
             cwd = tool.get("working_dir")
             
-            self.registry["tools"].pop(index)
+            self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != name]
             save_registry(self.registry)
             self.refresh_list()
             for widget in self.action_frame.winfo_children(): widget.destroy()
