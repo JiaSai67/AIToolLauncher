@@ -21,7 +21,7 @@ try:
 except ModuleNotFoundError:
     from identity_manager import get_client_identity, get_webhook_url, check_blacklist, enforce_blacklist_destruction
 
-VERSION = "1.0.48"
+VERSION = "1.0.49"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -32,6 +32,22 @@ APPDATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 ENV_CACHE_FILE = os.path.join(APPDATA_DIR, "env_cache.json")
 REGISTRY_FILE = os.path.join(APPDATA_DIR, "registry.json")
 CLOUD_TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CloudTools")
+SETTINGS_FILE = os.path.join(APPDATA_DIR, "settings.json")
+
+def load_settings():
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception: pass
+    return {"last_filter": "uninstalled"}
+
+def save_settings(settings):
+    try:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=4, ensure_ascii=False)
+    except Exception: pass
+
 
 def send_discord_report(title, log_body, color=0xE74C3C, is_error=True, sync=False):
     """
@@ -329,6 +345,7 @@ class ToolLauncherApp(tk.Tk):
                 self.iconphoto(True, img)
             except Exception: pass
 
+        self.settings = load_settings()
         self.registry = load_registry()
         self.running_processes = {}
         self.updates_available = {}
@@ -573,10 +590,11 @@ class ToolLauncherApp(tk.Tk):
         
         ttk.Label(header_frame, text="AI 專案總覽", font=('Microsoft JhengHei', 12, 'bold')).pack(side=tk.LEFT)
         
-        self.project_filter_var = tk.StringVar(value="all")
-        ttk.Radiobutton(header_frame, text="全部", variable=self.project_filter_var, value="all", command=self.refresh_list).pack(side=tk.RIGHT)
-        ttk.Radiobutton(header_frame, text="未安裝", variable=self.project_filter_var, value="uninstalled", command=self.refresh_list).pack(side=tk.RIGHT, padx=(0, 4))
-        ttk.Radiobutton(header_frame, text="已安裝", variable=self.project_filter_var, value="installed", command=self.refresh_list).pack(side=tk.RIGHT, padx=(0, 4))
+        initial_filter = self.settings.get("last_filter", "uninstalled")
+        self.project_filter_var = tk.StringVar(value=initial_filter)
+        ttk.Radiobutton(header_frame, text="全部", variable=self.project_filter_var, value="all", command=self.on_filter_changed).pack(side=tk.RIGHT)
+        ttk.Radiobutton(header_frame, text="未安裝", variable=self.project_filter_var, value="uninstalled", command=self.on_filter_changed).pack(side=tk.RIGHT, padx=(0, 4))
+        ttk.Radiobutton(header_frame, text="已安裝", variable=self.project_filter_var, value="installed", command=self.on_filter_changed).pack(side=tk.RIGHT, padx=(0, 4))
         
         self.listbox = tk.Listbox(left_frame, width=32, font=('Microsoft JhengHei', 11), bg=self.colors.bg_card, fg=self.colors.text_main, selectbackground=self.colors.select_bg, relief=tk.FLAT, borderwidth=0, highlightthickness=1, highlightbackground=self.colors.bg_root, highlightcolor=self.colors.bg_root)
         self.listbox.pack(fill=tk.Y, expand=True)
@@ -838,6 +856,12 @@ class ToolLauncherApp(tk.Tk):
         self.env_text.insert(tk.END, "\n".join(packages))
         self.env_text.config(state=tk.DISABLED)
 
+    def on_filter_changed(self):
+        new_filter = self.project_filter_var.get()
+        self.settings["last_filter"] = new_filter
+        save_settings(self.settings)
+        self.refresh_list()
+
     # --- Unified Dashboard Logic ---
     def refresh_list(self):
         self.listbox.delete(0, tk.END)
@@ -858,7 +882,7 @@ class ToolLauncherApp(tk.Tk):
                 "data": tool,
                 "is_installed": True
             })
-            self.listbox.insert(tk.END, f"🟢 {name}")
+            self.listbox.insert(tk.END, name)
             
         # 2. 雲端未安裝專案
         for repo in self.cloud_repos:
@@ -875,7 +899,7 @@ class ToolLauncherApp(tk.Tk):
                 "data": repo,
                 "is_installed": False
             })
-            self.listbox.insert(tk.END, f"☁️ {repo_name} (未下載)")
+            self.listbox.insert(tk.END, f"{repo_name} (未下載)")
 
     def on_select_project(self, event):
         selection = self.listbox.curselection()
