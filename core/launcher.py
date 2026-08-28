@@ -21,7 +21,7 @@ try:
 except ModuleNotFoundError:
     from identity_manager import get_client_identity, get_webhook_url, check_blacklist, enforce_blacklist_destruction
 
-VERSION = "1.0.51"
+VERSION = "1.0.52"
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -157,9 +157,12 @@ class EnvironmentManager:
         self.installed_packages = {}
         self.refresh()
         
+    def normalize_name(self, name):
+        return re.sub(r'[-_.]+', '-', name).lower()
+        
     def refresh(self):
         try:
-            self.installed_packages = {dist.metadata['Name'].lower(): dist.version for dist in importlib.metadata.distributions()}
+            self.installed_packages = {self.normalize_name(dist.metadata['Name']): dist.version for dist in importlib.metadata.distributions() if dist.metadata and 'Name' in dist.metadata}
         except Exception:
             pass
             
@@ -169,16 +172,17 @@ class EnvironmentManager:
             line = line.strip()
             if not line or line.startswith('#'): continue
             
-            match = re.match(r'^([a-zA-Z0-9_\-]+)', line)
+            match = re.match(r'^([a-zA-Z0-9_\-\.]+)', line)
             if match:
-                pkg_name = match.group(1).lower()
+                raw_pkg = match.group(1)
+                pkg_name = self.normalize_name(raw_pkg)
                 if pkg_name not in self.installed_packages:
-                    missing.append(pkg_name)
+                    missing.append(raw_pkg)
                     continue
                 if '==' in line:
                     required_version = line.split('==')[1].strip()
                     if self.installed_packages.get(pkg_name) != required_version:
-                        missing.append(f"{pkg_name}=={required_version}")
+                        missing.append(f"{raw_pkg}=={required_version}")
         return missing
 
     def needs_install(self, req_path):
@@ -222,15 +226,12 @@ class EnvCacheManager:
         if not os.path.exists(req_path):
             return "no_req", []
             
-        current_mtime = os.path.getmtime(req_path)
-        cache_key = f"local_{req_path}"
-        
-        if cache_key in self.cache and self.cache[cache_key].get("mtime") == current_mtime:
-            return self.cache[cache_key]["status"], self.cache[cache_key].get("missing", [])
-            
+        # 即時比對當前環境套件，杜絕靜態快取導致的無窮安裝迴圈
         missing = self.env_mgr.needs_install(req_path)
         status = "needs_install" if missing else "ready"
         
+        current_mtime = os.path.getmtime(req_path)
+        cache_key = f"local_{req_path}"
         self.cache[cache_key] = {"mtime": current_mtime, "status": status, "missing": missing}
         self.save()
         return status, missing
