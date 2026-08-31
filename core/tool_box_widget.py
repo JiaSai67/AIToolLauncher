@@ -1,6 +1,6 @@
 import os, sys, subprocess, webbrowser
-from PySide6.QtCore import Qt, Signal, QRectF, QSize
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QFont, QPen
+from PySide6.QtCore import Qt, Signal, QRectF, QSize, QPoint
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QFont, QPen, QContextMenuEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSizePolicy
 )
@@ -47,12 +47,10 @@ def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.2
 class ToolCardWidget(CardWidget):
     """
     小工具磁貼卡片
-    支援狀態：
-    1. 未開啟 (IDLE)       - 原色鮮明、精緻半透明磨砂卡片，圖標置中
-    2. 已開啟 (RUNNING)    - 翡翠綠 (邊框與標籤)，再次點選直接呼叫軟體置頂
-    3. 錯誤   (ERROR)      - 緋紅 (邊框與標籤)
-    4. 安裝中 (INSTALLING) - 藍色虛線邊框與進度文字
-    5. 收藏功能 (FAVORITE) - 右鍵新增/取消收藏，右上角點綴金色星標
+    特點：
+    1. 專案名稱與圖標位置絕對固定，狀態標籤永遠置於底部專屬欄位，絕不推擠專案名稱！
+    2. 全域響應右鍵事件 (包含圖示與文字區域)，支援右鍵選單與收藏切換。
+    3. 支援未開啟 (IDLE)、已開啟 (RUNNING)、錯誤 (ERROR)、安裝中 (INSTALLING)。
     """
     toolClicked = Signal(dict, bool)           # (tool_data, is_installed)
     installRequested = Signal(dict)            # (repo_data)
@@ -81,18 +79,20 @@ class ToolCardWidget(CardWidget):
 
     def init_ui(self):
         card_w = max(112, self.icon_size + 48)
-        card_h = max(120, self.icon_size + 56)
+        card_h = max(136, self.icon_size + 76)
         self.setFixedSize(card_w, card_h)
 
+        # 頂部固定對齊，圖標、標題與狀態標籤座標 100% 恆定固定
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(8, 8, 8, 8)
-        self.layout.setSpacing(6)
-        self.layout.setAlignment(Qt.AlignCenter)
+        self.layout.setContentsMargins(4, 6, 4, 6)
+        self.layout.setSpacing(2)
+        self.layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
-        # 1. 圓角圖標 (絕對置中)
+        # 1. 圓角圖標 (置中，穿透滑鼠以保證整張卡片右鍵 100% 靈敏觸發)
         self.icon_label = QLabel(self)
         self.icon_label.setFixedSize(self.icon_size, self.icon_size)
         self.icon_label.setAlignment(Qt.AlignCenter)
+        self.icon_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.icon_label.setStyleSheet("background: transparent; border: none;")
         self.update_icon()
         self.layout.addWidget(self.icon_label, 0, Qt.AlignCenter)
@@ -102,17 +102,21 @@ class ToolCardWidget(CardWidget):
         cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "cache", "icons")
         get_cloud_icon_async(repo_name, cache_dir, lambda p: self.cloudIconLoaded.emit(p))
 
-        # 2. 名稱 (置中)
+        # 2. 名稱 (高度鎖定 36px，支援 2 行置中換行，位置恆定，絕不推擠碰撞圖標)
         name = self.data.get("name", "未命名工具")
         self.title_label = StrongBodyLabel(name, self)
+        self.title_label.setFixedSize(card_w - 8, 36)
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setWordWrap(True)
+        self.title_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.title_label.setStyleSheet("font-size: 12px; line-height: 1.2;")
         self.layout.addWidget(self.title_label, 0, Qt.AlignCenter)
 
-        # 3. 狀態標籤 (置中)
+        # 3. 狀態標籤 (固定位於底部專屬 18px 區域，永不隱藏以保持佈局恆定)
         self.badge_label = CaptionLabel("", self)
+        self.badge_label.setFixedHeight(18)
         self.badge_label.setAlignment(Qt.AlignCenter)
+        self.badge_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.layout.addWidget(self.badge_label, 0, Qt.AlignCenter)
 
         # 初始狀態樣式
@@ -141,20 +145,19 @@ class ToolCardWidget(CardWidget):
         self.current_state = state
 
         if state == self.STATE_INSTALLING:
-            # 📥 安裝中 (偏黑卡片 + 藍色虛線框 + 進度標籤)
+            # 📥 安裝中 (偏黑卡片 + 藍色虛線框 + 底部進度膠囊)
             self.setStyleSheet("""
                 ToolCardWidget {
-                    background-color: rgba(18, 18, 20, 0.75);
-                    border: 1.5px dashed rgba(96, 205, 255, 0.6);
+                    background-color: rgba(18, 18, 20, 0.85);
+                    border: 1.5px dashed rgba(96, 205, 255, 0.7);
                     border-radius: 8px;
                 }
             """)
             self.badge_label.setText(f"📥 安裝中 {self.install_progress}%")
-            self.badge_label.setStyleSheet("color: #60CDFF; font-size: 10px; font-weight: bold;")
-            self.badge_label.show()
+            self.badge_label.setStyleSheet("color: #60CDFF; font-size: 10px; font-weight: bold; background: rgba(96, 205, 255, 0.18); border-radius: 4px; padding: 1px 6px;")
 
         elif state == self.STATE_RUNNING:
-            # 🟢 已開啟 (翡翠綠 + 運行中標籤)
+            # 🟢 已開啟 (翡翠綠邊框 + 底部運行中膠囊標籤)
             self.setStyleSheet("""
                 ToolCardWidget {
                     background-color: rgba(16, 185, 129, 0.14);
@@ -167,11 +170,10 @@ class ToolCardWidget(CardWidget):
                 }
             """)
             self.badge_label.setText("🟢 運行中")
-            self.badge_label.setStyleSheet("color: #34D399; font-size: 10px; font-weight: bold;")
-            self.badge_label.show()
+            self.badge_label.setStyleSheet("color: #34D399; font-size: 10px; font-weight: bold; background: rgba(16, 185, 129, 0.2); border-radius: 4px; padding: 1px 6px;")
 
         elif state == self.STATE_ERROR:
-            # 🔴 錯誤 (緋紅 + 錯誤標籤)
+            # 🔴 錯誤 (緋紅邊框 + 底部錯誤膠囊)
             self.setStyleSheet("""
                 ToolCardWidget {
                     background-color: rgba(239, 68, 68, 0.14);
@@ -184,8 +186,7 @@ class ToolCardWidget(CardWidget):
                 }
             """)
             self.badge_label.setText("🔴 啟動錯誤")
-            self.badge_label.setStyleSheet("color: #F87171; font-size: 10px; font-weight: bold;")
-            self.badge_label.show()
+            self.badge_label.setStyleSheet("color: #F87171; font-size: 10px; font-weight: bold; background: rgba(239, 68, 68, 0.2); border-radius: 4px; padding: 1px 6px;")
 
         else:
             # ⚪ 未開啟 (鮮明原色、預設精緻半透明磨砂卡片)
@@ -202,10 +203,10 @@ class ToolCardWidget(CardWidget):
             """)
             if not self.is_installed:
                 self.badge_label.setText("☁️ 點擊安裝")
-                self.badge_label.setStyleSheet("color: #9A70FF; font-size: 10px; font-weight: bold;")
-                self.badge_label.show()
+                self.badge_label.setStyleSheet("color: #9A70FF; font-size: 10px; font-weight: bold; background: rgba(154, 112, 255, 0.15); border-radius: 4px; padding: 1px 6px;")
             else:
-                self.badge_label.hide()
+                self.badge_label.setText("")
+                self.badge_label.setStyleSheet("background: transparent;")
 
         self.update_icon()
 
@@ -285,28 +286,44 @@ class ToolCardWidget(CardWidget):
     def set_icon_size(self, size: int):
         self.icon_size = size
         card_w = max(112, self.icon_size + 48)
-        card_h = max(120, self.icon_size + 56)
+        card_h = max(136, self.icon_size + 76)
         self.setFixedSize(card_w, card_h)
         self.icon_label.setFixedSize(self.icon_size, self.icon_size)
+        self.title_label.setFixedSize(card_w - 8, 36)
         self.update_icon()
 
+    def contextMenuEvent(self, event: QContextMenuEvent):
+        """
+        處理標準右鍵上下文選單事件
+        """
+        if self.current_state != self.STATE_INSTALLING:
+            self.show_context_menu(event.globalPos())
+            event.accept()
+        else:
+            super().contextMenuEvent(event)
+
     def mousePressEvent(self, event):
+        """
+        滑鼠點擊處理：左鍵執行啟動/安裝，右鍵彈出選單
+        """
         if event.button() == Qt.LeftButton:
             if self.current_state != self.STATE_INSTALLING:
                 self.toolClicked.emit(self.data, self.is_installed)
         elif event.button() == Qt.RightButton:
             if self.current_state != self.STATE_INSTALLING:
                 self.show_context_menu(event.globalPosition().toPoint())
+                event.accept()
+                return
         super().mousePressEvent(event)
 
-    def show_context_menu(self, pos):
+    def show_context_menu(self, pos: QPoint):
         menu = RoundMenu(parent=self)
 
         # 收藏/取消收藏動作
         if self.is_favorite:
-            act_fav = Action(FluentIcon.STAR, "⭐ 取消收藏 (Remove Favorite)", triggered=lambda: self.toggleFavoriteRequested.emit(self.data))
+            act_fav = Action(FluentIcon.UNPIN, "⭐ 取消收藏 (Remove Favorite)", triggered=lambda: self.toggleFavoriteRequested.emit(self.data))
         else:
-            act_fav = Action(FluentIcon.FAVORITE, "⭐ 加入收藏 (Add to Favorite)", triggered=lambda: self.toggleFavoriteRequested.emit(self.data))
+            act_fav = Action(FluentIcon.HEART, "⭐ 加入收藏 (Add to Favorite)", triggered=lambda: self.toggleFavoriteRequested.emit(self.data))
 
         if self.is_installed:
             # === 已安裝小工具選單 ===
