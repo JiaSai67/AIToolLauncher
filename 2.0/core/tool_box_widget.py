@@ -1,22 +1,52 @@
 import os, sys, subprocess
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtCore import Qt, Signal, QRectF, QSize
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSizePolicy
 )
 from qfluentwidgets import (
-    CardWidget, StrongBodyLabel, CaptionLabel, TransparentToolButton,
+    CardWidget, SimpleCardWidget, StrongBodyLabel, CaptionLabel,
     FluentIcon, RoundMenu, Action, ToolTipFilter, ToolTipPosition
 )
 
+def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.22) -> QPixmap:
+    """
+    將任意圖示裁切並繪製為圓角平滑圖示（iOS / macOS 現代風格）
+    """
+    if src_pixmap.isNull():
+        return src_pixmap
+
+    # 確保等比例縮放
+    scaled = src_pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    radius = max(6, int(size * radius_ratio))
+
+    dest = QPixmap(size, size)
+    dest.fill(Qt.transparent)
+
+    painter = QPainter(dest)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0, 0, size, size), radius, radius)
+    painter.setClipPath(path)
+
+    # 居中繪製
+    x = (size - scaled.width()) // 2
+    y = (size - scaled.height()) // 2
+    painter.drawPixmap(x, y, scaled)
+    painter.end()
+
+    return dest
+
+
 class ToolCardWidget(CardWidget):
     """
-    單一工具磁貼卡片 (Tool Card)
-    支援動態圖示縮放、懸浮微光動效、雙擊與點擊啟動
+    單一小工具磁貼卡片 (無銳角、圓角圖示、懸浮微動效)
     """
     toolClicked = Signal(dict)
 
-    def __init__(self, tool_data: dict, icon_size: int = 52, parent=None):
+    def __init__(self, tool_data: dict, icon_size: int = 56, parent=None):
         super().__init__(parent)
         self.tool_data = tool_data
         self.icon_size = icon_size
@@ -24,15 +54,20 @@ class ToolCardWidget(CardWidget):
         self.init_ui()
 
     def init_ui(self):
-        self.setFixedSize(self.icon_size * 2 + 30, self.icon_size + 70)
+        # 依據圖示大小動態設置卡片寬高
+        card_w = max(110, self.icon_size + 44)
+        card_h = max(118, self.icon_size + 58)
+        self.setFixedSize(card_w, card_h)
+
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(10, 10, 10, 10)
+        self.layout.setContentsMargins(8, 10, 8, 8)
         self.layout.setSpacing(6)
         self.layout.setAlignment(Qt.AlignCenter)
 
-        # 1. App Icon
+        # 1. 圓角 App Icon
         self.icon_label = QLabel(self)
         self.icon_label.setAlignment(Qt.AlignCenter)
+        self.icon_label.setStyleSheet("background: transparent; border: none;")
         self.update_icon()
         self.layout.addWidget(self.icon_label)
 
@@ -40,23 +75,21 @@ class ToolCardWidget(CardWidget):
         self.title_label = StrongBodyLabel(self.tool_data.get("name", "未命名工具"), self)
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setWordWrap(True)
+        self.title_label.setStyleSheet("font-size: 12px; line-height: 1.2;")
         self.layout.addWidget(self.title_label)
 
-        # ToolTip
+        # 3. ToolTip
         desc = self.tool_data.get("description", "無附加說明")
         exe_path = self.tool_data.get("executable", "")
         self.setToolTip(f"【{self.tool_data.get('name')}】\n{desc}\n路徑: {exe_path}")
-        self.installEventFilter(ToolTipFilter(self, showDelay=300, position=ToolTipPosition.BOTTOM))
+        self.installEventFilter(ToolTipFilter(self, showDelay=250, position=ToolTipPosition.BOTTOM))
 
     def update_icon(self):
-        pixmap = self.get_tool_pixmap()
-        scaled = pixmap.scaled(
-            self.icon_size, self.icon_size,
-            Qt.KeepAspectRatio, Qt.SmoothTransformation
-        )
-        self.icon_label.setPixmap(scaled)
+        raw_pixmap = self.get_tool_raw_pixmap()
+        rounded_pixmap = get_rounded_pixmap(raw_pixmap, self.icon_size)
+        self.icon_label.setPixmap(rounded_pixmap)
 
-    def get_tool_pixmap(self) -> QPixmap:
+    def get_tool_raw_pixmap(self) -> QPixmap:
         working_dir = self.tool_data.get("working_dir", "")
         candidate_paths = [
             os.path.join(working_dir, "resources", "icon.png"),
@@ -72,7 +105,9 @@ class ToolCardWidget(CardWidget):
 
     def set_icon_size(self, size: int):
         self.icon_size = size
-        self.setFixedSize(self.icon_size * 2 + 30, self.icon_size + 70)
+        card_w = max(110, self.icon_size + 44)
+        card_h = max(118, self.icon_size + 58)
+        self.setFixedSize(card_w, card_h)
         self.update_icon()
 
     def mousePressEvent(self, event):
@@ -105,79 +140,3 @@ class ToolCardWidget(CardWidget):
         from PySide6.QtWidgets import QApplication
         exe_path = self.tool_data.get("executable", "")
         QApplication.clipboard().setText(exe_path)
-
-
-class CategoryBoxWidget(CardWidget):
-    """
-    分類收納盒組件 (Category Box)
-    具備毛玻璃卡片盒外觀、折疊/展開切換、計數徽章與卡片流式網格
-    """
-    toolLaunchRequested = Signal(dict)
-
-    def __init__(self, category_name: str, tools: list, icon_size: int = 52, parent=None):
-        super().__init__(parent)
-        self.category_name = category_name
-        self.tools = tools
-        self.icon_size = icon_size
-        self.is_collapsed = False
-        self.card_widgets = []
-        self.init_ui()
-
-    def init_ui(self):
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(14, 12, 14, 14)
-        self.main_layout.setSpacing(10)
-
-        # 1. Box Header
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(4, 0, 4, 0)
-
-        self.title_label = StrongBodyLabel(f"📦 {self.category_name}", self)
-        self.count_badge = CaptionLabel(f"({len(self.tools)} 個項目)", self)
-        self.count_badge.setStyleSheet("color: #888888; font-weight: bold;")
-
-        self.toggle_btn = TransparentToolButton(FluentIcon.CHEVRON_DOWN_MED, self)
-        self.toggle_btn.setToolTip("折疊 / 展開收納盒")
-        self.toggle_btn.clicked.connect(self.toggle_collapse)
-
-        header_layout.addWidget(self.title_label)
-        header_layout.addWidget(self.count_badge)
-        header_layout.addStretch(1)
-        header_layout.addWidget(self.toggle_btn)
-        self.main_layout.addLayout(header_layout)
-
-        # 2. Grid Container for tools
-        self.grid_container = QWidget(self)
-        self.grid_layout = QHBoxLayout(self.grid_container)
-        self.grid_layout.setContentsMargins(0, 4, 0, 0)
-        self.grid_layout.setSpacing(12)
-        self.grid_layout.setAlignment(Qt.AlignLeft)
-
-        self.render_tool_cards()
-        self.main_layout.addWidget(self.grid_container)
-
-    def render_tool_cards(self):
-        for c in self.card_widgets:
-            c.deleteLater()
-        self.card_widgets.clear()
-
-        for t in self.tools:
-            card = ToolCardWidget(t, icon_size=self.icon_size, parent=self.grid_container)
-            card.toolClicked.connect(self.toolLaunchRequested.emit)
-            self.grid_layout.addWidget(card)
-            self.card_widgets.append(card)
-
-        self.grid_layout.addStretch(1)
-
-    def update_icon_size(self, size: int):
-        self.icon_size = size
-        for card in self.card_widgets:
-            card.set_icon_size(size)
-
-    def toggle_collapse(self):
-        self.is_collapsed = not self.is_collapsed
-        self.grid_container.setVisible(not self.is_collapsed)
-        if self.is_collapsed:
-            self.toggle_btn.setIcon(FluentIcon.CHEVRON_RIGHT_MED)
-        else:
-            self.toggle_btn.setIcon(FluentIcon.CHEVRON_DOWN_MED)
