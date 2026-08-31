@@ -173,19 +173,13 @@ class AIToolLauncherV2(FluentWindow):
         self.addSubInterface(self.settings_panel, FluentIcon.SETTING, "個性化設置", NavigationItemPosition.BOTTOM)
 
     def load_tools(self) -> list:
-        # Check local registry or fallback to 1.0 registry
-        paths = [
-            self.registry_file,
-            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "1.0", "resources", "config", "registry.json")
-        ]
-        for p in paths:
-            if os.path.exists(p):
-                try:
-                    with open(p, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        return data.get("tools", [])
-                except Exception:
-                    pass
+        if os.path.exists(self.registry_file):
+            try:
+                with open(self.registry_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return data.get("tools", [])
+            except Exception:
+                pass
         return []
 
     def apply_live_settings(self, s: dict):

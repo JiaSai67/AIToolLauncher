@@ -60,6 +60,7 @@ class ToolCardWidget(CardWidget):
         working_dir = self.tool_data.get("working_dir", "")
         candidate_paths = [
             os.path.join(working_dir, "resources", "icon.png"),
+            os.path.join(working_dir, "assets", "icon.png"),
             os.path.join(working_dir, "icon.png"),
             os.path.join(working_dir, "app.ico"),
             os.path.join(os.path.dirname(__file__), "..", "resources", "icon.png")

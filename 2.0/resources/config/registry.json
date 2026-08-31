@@ -2,27 +2,27 @@
     "tools": [
         {
             "name": "Steam Manifest - 本地開發版",
-            "description": "自動讀取並更新 Steam Lua 設定檔，取得最新版的 Depot ID 與 Manifest ID。支援鎖定資料夾功能。(本地開發測試)",
+            "description": "本地原始碼開發版本 (支援快速熱重載與除錯)",
             "executable": "G:\\python\\SteamManifestUpdater\\src\\main.py",
             "working_dir": "G:\\python\\SteamManifestUpdater"
         },
         {
             "name": "Steam Manifest 更新工具",
-            "description": "Steam Manifest Updater - Auto uploaded version",
-            "executable": "G:\\python\\toolLauncher\\CloudTools\\SteamManifestUpdater\\src\\main.py",
-            "working_dir": "G:\\python\\toolLauncher\\CloudTools\\SteamManifestUpdater"
+            "description": "Steam Manifest Updater - 雲端同步發行版",
+            "executable": "G:\\python\\toolLauncher\\2.0\\CloudTools\\SteamManifestUpdater\\src\\main.py",
+            "working_dir": "G:\\python\\toolLauncher\\2.0\\CloudTools\\SteamManifestUpdater"
         },
         {
             "name": "按鍵發話控制器 (PTTApp)",
-            "description": "針對任意程式設定麥克風按鍵發話快捷鍵",
-            "executable": "G:\\python\\toolLauncher\\CloudTools\\PTTApp\\main.py",
-            "working_dir": "G:\\python\\toolLauncher\\CloudTools\\PTTApp"
+            "description": "語音通訊按鍵發話控制器 - 雲端同步發行版",
+            "executable": "G:\\python\\toolLauncher\\2.0\\CloudTools\\PTTApp\\main.py",
+            "working_dir": "G:\\python\\toolLauncher\\2.0\\CloudTools\\PTTApp"
         },
         {
             "name": "專屬計畫書 🌸",
-            "description": "專屬計畫書 🌸 - 為寶貝專屬打造的馬卡龍粉色系計畫書，包含打卡流程與各種溫馨任務清單。",
-            "executable": "G:\\python\\toolLauncher\\CloudTools\\xingshili\\main.py",
-            "working_dir": "G:\\python\\toolLauncher\\CloudTools\\xingshili"
+            "description": "個人目標與排程規劃助手 - 本地專屬版",
+            "executable": "G:\\python\\xingshili\\main.py",
+            "working_dir": "G:\\python\\xingshili"
         }
     ]
 }
