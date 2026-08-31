@@ -1,0 +1,244 @@
+import os, sys, json, subprocess, shutil, re, urllib.request, threading
+from datetime import datetime
+
+try:
+    from core.identity_manager import send_identity_webhook
+except ModuleNotFoundError:
+    from identity_manager import send_identity_webhook
+
+GITHUB_REPOS_API = "https://api.github.com/users/JiaSai67/repos"
+
+def parse_linkme(target_dir: str) -> dict:
+    """
+    解析專案目錄下的 linkme.bat 獲取啟動資訊
+    """
+    linkme_path = os.path.join(target_dir, "linkme.bat")
+    if not os.path.exists(linkme_path):
+        return None
+
+    content = ""
+    for enc in ['utf-8', 'utf-8-sig', 'cp950', 'big5', 'gbk']:
+        try:
+            with open(linkme_path, 'r', encoding=enc) as f:
+                content = f.read()
+                break
+        except Exception:
+            continue
+
+    if not content:
+        return None
+
+    name = None
+    desc = ""
+    exec_file = None
+
+    m_name = re.search(r'set\s+"?PROJECT_NAME=([^"\r\n]+)"?', content, re.IGNORECASE)
+    if m_name:
+        name = m_name.group(1).strip()
+
+    m_desc = re.search(r'set\s+"?PROJECT_DESC=([^"\r\n]+)"?', content, re.IGNORECASE)
+    if m_desc:
+        desc = m_desc.group(1).strip()
+
+    m_exec = re.search(r'set\s+"?EXEC_FILE=(?:%CWD%\\|\.\/|\.\\|)([^"\r\n]+)"?', content, re.IGNORECASE)
+    if m_exec:
+        rel_exec = m_exec.group(1).strip()
+        if os.path.isabs(rel_exec):
+            exec_file = rel_exec
+        else:
+            exec_file = os.path.normpath(os.path.join(target_dir, rel_exec))
+
+    return {
+        "name": name,
+        "description": desc,
+        "executable": exec_file
+    }
+
+def fetch_github_repos(callback):
+    """
+    非同步從 GitHub API 獲取雲端倉庫列表
+    """
+    def _fetch():
+        try:
+            req = urllib.request.Request(GITHUB_REPOS_API)
+            req.add_header("Accept", "application/vnd.github.v3+json")
+            req.add_header("User-Agent", "AIToolLauncher-2.0")
+
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode('utf-8'))
+
+            # 過濾掉 launcher 本身
+            repos = [r for r in data if r.get('name', '').lower() != 'aitoollauncher']
+            callback(True, repos)
+        except Exception as e:
+            callback(False, str(e))
+
+    threading.Thread(target=_fetch, daemon=True).start()
+
+def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, on_status, on_finished):
+    """
+    下載並安裝雲端小工具 (git clone + linkme.bat 註冊 + pip 安裝)
+    """
+    def _task():
+        repo_name = repo.get('name', '')
+        clone_url = repo.get('clone_url', '')
+        target_dir = os.path.join(cloud_tools_dir, repo_name)
+        flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+
+        try:
+            on_status(f"⏳ 正在從 GitHub 下載 【{repo_name}】...")
+            os.makedirs(cloud_tools_dir, exist_ok=True)
+
+            if os.path.exists(target_dir):
+                shutil.rmtree(target_dir, ignore_errors=True)
+
+            # 1. Git Clone
+            p = subprocess.Popen(
+                ["git", "clone", "--progress", clone_url, repo_name],
+                cwd=cloud_tools_dir, creationflags=flags,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding='utf-8', errors='replace'
+            )
+            for line in p.stdout:
+                line_str = line.strip()
+                if line_str:
+                    on_status(f"📥 {line_str[:50]}")
+            p.wait()
+
+            if p.returncode != 0:
+                on_finished(False, f"Git clone 失敗 (代碼: {p.returncode})", None)
+                return
+
+            on_status(f"🔍 正在解析 【{repo_name}】 設定與註冊資訊...")
+
+            # 2. 解析 linkme.bat 或尋找 main.py / start.bat
+            name = repo_name
+            desc = repo.get('description') or ""
+            exec_file = None
+
+            info = parse_linkme(target_dir)
+            if info:
+                if info.get("name"): name = info["name"]
+                if info.get("description"): desc = info["description"]
+                if info.get("executable") and os.path.exists(info["executable"]):
+                    exec_file = info["executable"]
+
+            if not exec_file:
+                for candidate in ["main.py", "start.bat", "app.py", "src/main.py"]:
+                    cand_path = os.path.normpath(os.path.join(target_dir, candidate))
+                    if os.path.exists(cand_path):
+                        exec_file = cand_path
+                        break
+
+            if not exec_file:
+                on_finished(False, "下載完成，但找不到標準啟動檔 (如 linkme.bat 或 main.py)", None)
+                return
+
+            # 3. 安裝 requirements.txt
+            req_path = os.path.join(target_dir, "requirements.txt")
+            if os.path.exists(req_path):
+                on_status(f"📦 正在為 【{name}】 補齊 Python 套件庫...")
+                pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
+                subprocess.run(
+                    [pip_cmd, "-m", "pip", "install", "-r", req_path],
+                    cwd=target_dir, creationflags=flags,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+
+            tool_entry = {
+                "name": name,
+                "description": desc,
+                "executable": exec_file,
+                "working_dir": target_dir
+            }
+
+            send_identity_webhook(f"📥 成功下載小工具: {name}", f"倉庫: {clone_url}\n路徑: {exec_file}")
+            on_finished(True, f"【{name}】已成功下載並註冊！", tool_entry)
+
+        except Exception as e:
+            send_identity_webhook(f"💥 下載小工具失敗: {repo_name}", str(e), color=0xFF0033)
+            on_finished(False, str(e), None)
+
+    threading.Thread(target=_task, daemon=True).start()
+
+def reinstall_tool_async(tool_data: dict, python_exe: str, on_status, on_finished):
+    """
+    重新拉取與安裝已安裝的小工具 (git fetch + reset + linkme + pip)
+    """
+    def _task():
+        name = tool_data.get('name', '小工具')
+        wdir = tool_data.get('working_dir', '')
+        flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+
+        if not os.path.exists(wdir):
+            on_finished(False, f"找不到工作目錄: {wdir}", tool_data)
+            return
+
+        try:
+            on_status(f"⏳ 正在重新拉取 【{name}】 最新程式碼...")
+            # 1. git fetch origin
+            subprocess.run(["git", "fetch", "origin"], cwd=wdir, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # 2. git reset --hard origin/main
+            p = subprocess.Popen(
+                ["git", "reset", "--hard", "origin/main"],
+                cwd=wdir, creationflags=flags,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding='utf-8', errors='replace'
+            )
+            for line in p.stdout:
+                l = line.strip()
+                if l: on_status(f"🔄 {l[:50]}")
+            p.wait()
+
+            if p.returncode != 0:
+                # fallback git pull
+                p2 = subprocess.Popen(
+                    ["git", "pull"],
+                    cwd=wdir, creationflags=flags,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, encoding='utf-8', errors='replace'
+                )
+                p2.wait()
+
+            # 3. 重新解析 linkme.bat
+            info = parse_linkme(wdir)
+            if info:
+                if info.get("name"): tool_data["name"] = info["name"]
+                if info.get("description"): tool_data["description"] = info["description"]
+                if info.get("executable") and os.path.exists(info["executable"]):
+                    tool_data["executable"] = info["executable"]
+
+            # 4. 檢查 requirements.txt
+            req_path = os.path.join(wdir, "requirements.txt")
+            if os.path.exists(req_path):
+                on_status(f"📦 正在檢查並更新 【{name}】 套件庫...")
+                pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
+                subprocess.run(
+                    [pip_cmd, "-m", "pip", "install", "-r", req_path],
+                    cwd=wdir, creationflags=flags,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+
+            send_identity_webhook(f"🔄 重新拉取小工具: {name}", f"工作目錄: {wdir}")
+            on_finished(True, f"【{name}】重新拉取與更新完成！", tool_data)
+
+        except Exception as e:
+            send_identity_webhook(f"💥 重新拉取失敗: {name}", str(e), color=0xFF0033)
+            on_finished(False, str(e), tool_data)
+
+    threading.Thread(target=_task, daemon=True).start()
+
+def uninstall_tool(tool_data: dict, cloud_tools_dir: str) -> bool:
+    """
+    移除小工具：若位於 CloudTools 則刪除資料夾
+    """
+    wdir = tool_data.get("working_dir", "")
+    try:
+        if wdir and os.path.exists(wdir):
+            # 若為雲端下載的專案，安全清除資料夾
+            if os.path.abspath(wdir).startswith(os.path.abspath(cloud_tools_dir)):
+                shutil.rmtree(wdir, ignore_errors=True)
+        return True
+    except Exception:
+        return False
