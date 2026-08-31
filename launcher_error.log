@@ -1,6 +1,0 @@
-Traceback (most recent call last):
-  File "G:\python\toolLauncher\core\launcher_v2.py", line 656, in poll_running_processes
-    card.apply_state(ToolCardWidget.STATE_IDLE)
-  File "G:\python\toolLauncher\core\tool_box_widget.py", line 557, in apply_state
-    self.setStyleSheet("""
-RuntimeError: libshiboken: Internal C++ object (ToolCardWidget) already deleted.
