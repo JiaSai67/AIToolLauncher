@@ -57,19 +57,38 @@ install_global_exception_hook()
 VERSION = "2.0.9"
 
 
-def set_native_topmost(win_id: int, is_topmost: bool):
+def set_native_topmost(window_obj, is_topmost: bool):
     """
-    使用 Windows 原生 Win32 API 設置視窗置頂
+    使用 Windows 原生 Win32 API (64 位元 HWND 嚴格簽名) 設置視窗絕對置頂
     """
     try:
-        HWND_TOPMOST = -1
-        HWND_NOTOPMOST = -2
-        SWP_NOMOVE = 0x0002
-        SWP_NOSIZE = 0x0001
-        SWP_SHOWWINDOW = 0x0040
-        flags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
-        target = HWND_TOPMOST if is_topmost else HWND_NOTOPMOST
-        ctypes.windll.user32.SetWindowPos(int(win_id), target, 0, 0, 0, 0, flags)
+        if sys.platform == "win32":
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            SetWindowPos = user32.SetWindowPos
+            SetWindowPos.argtypes = [
+                wintypes.HWND,
+                wintypes.HWND,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                wintypes.UINT
+            ]
+            SetWindowPos.restype = wintypes.BOOL
+            
+            HWND_TOPMOST = wintypes.HWND(-1)
+            HWND_NOTOPMOST = wintypes.HWND(-2)
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOACTIVATE = 0x0010
+            SWP_SHOWWINDOW = 0x0040
+            flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW
+            
+            hwnd_val = int(window_obj.winId()) if hasattr(window_obj, 'winId') else int(window_obj)
+            hwnd = wintypes.HWND(hwnd_val)
+            target = HWND_TOPMOST if is_topmost else HWND_NOTOPMOST
+            SetWindowPos(hwnd, target, 0, 0, 0, 0, flags)
     except Exception:
         pass
 
@@ -515,12 +534,36 @@ class AIToolLauncherV2(MSFluentWindow):
             except Exception:
                 pass
 
+        if self.is_topmost:
+            set_native_topmost(self, True)
+
     def toggle_pin_topmost(self):
         self.is_topmost = not self.is_topmost
         self.settings["always_on_top"] = self.is_topmost
         self.settings_panel.save_settings()
         self.update_pin_button_state()
-        set_native_topmost(self.winId(), self.is_topmost)
+        set_native_topmost(self, self.is_topmost)
+
+        if self.is_topmost:
+            InfoBar.success(
+                title="📌 視窗已置頂",
+                content="收納盒已鎖定在螢幕最上層！",
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
+        else:
+            InfoBar.info(
+                title="📌 已取消置頂",
+                content="收納盒已恢復正常視窗層級。",
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
 
     def update_pin_button_state(self):
         if self.is_topmost:
@@ -615,7 +658,9 @@ class AIToolLauncherV2(MSFluentWindow):
             self.box_lobby.update_icon_size(icon_size)
 
         # 3. 視窗置頂
-        set_native_topmost(self.winId(), self.is_topmost)
+        self.is_topmost = s.get("always_on_top", False)
+        self.update_pin_button_state()
+        set_native_topmost(self, self.is_topmost)
 
     def launch_tool(self, tool_data: dict, card: ToolCardWidget = None):
         name = tool_data.get("name", "小工具")
