@@ -190,7 +190,7 @@ class BoxLobbyInterface(QWidget):
 
         self.layout.addLayout(top_bar)
 
-        # 2. 滾動區域 (包含上下雙區塊)
+        # 2. 滾動區域 (包含上下雙區塊: ⭐ 我的收藏 / 📦 全部專案)
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
@@ -202,17 +202,17 @@ class BoxLobbyInterface(QWidget):
         self.content_layout.setContentsMargins(4, 4, 8, 24)
         self.content_layout.setSpacing(18)
 
-        # === 上方區塊: 🟢 已安裝 ===
-        self.installed_header = StrongBodyLabel("🟢 已安裝", self.container)
-        self.installed_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #6CCB5F;")
-        self.content_layout.addWidget(self.installed_header)
+        # === 上方區塊: ⭐ 我的收藏 ===
+        self.favorites_header = StrongBodyLabel("⭐ 我的收藏", self.container)
+        self.favorites_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #F59E0B;")
+        self.content_layout.addWidget(self.favorites_header)
 
-        self.installed_flow_widget = QWidget(self.container)
-        self.installed_flow_widget.setStyleSheet("background: transparent;")
-        self.installed_flow_layout = FlowLayout(self.installed_flow_widget, needAni=False)
-        self.installed_flow_layout.setContentsMargins(0, 4, 0, 8)
-        self.installed_flow_layout.setSpacing(16)
-        self.content_layout.addWidget(self.installed_flow_widget)
+        self.favorites_flow_widget = QWidget(self.container)
+        self.favorites_flow_widget.setStyleSheet("background: transparent;")
+        self.favorites_flow_layout = FlowLayout(self.favorites_flow_widget, needAni=False)
+        self.favorites_flow_layout.setContentsMargins(0, 4, 0, 8)
+        self.favorites_flow_layout.setSpacing(16)
+        self.content_layout.addWidget(self.favorites_flow_widget)
 
         # 分隔線
         self.divider = QFrame(self.container)
@@ -220,17 +220,17 @@ class BoxLobbyInterface(QWidget):
         self.divider.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); max-height: 1px;")
         self.content_layout.addWidget(self.divider)
 
-        # === 下方區塊: ☁️ 雲端庫 / 未安裝 ===
-        self.uninstalled_header = StrongBodyLabel("☁️ 雲端庫 / 未安裝", self.container)
-        self.uninstalled_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #9A70FF;")
-        self.content_layout.addWidget(self.uninstalled_header)
+        # === 下方區塊: 📦 全部專案 ===
+        self.all_header = StrongBodyLabel("📦 全部專案", self.container)
+        self.all_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #9A70FF;")
+        self.content_layout.addWidget(self.all_header)
 
-        self.uninstalled_flow_widget = QWidget(self.container)
-        self.uninstalled_flow_widget.setStyleSheet("background: transparent;")
-        self.uninstalled_flow_layout = FlowLayout(self.uninstalled_flow_widget, needAni=False)
-        self.uninstalled_flow_layout.setContentsMargins(0, 4, 0, 8)
-        self.uninstalled_flow_layout.setSpacing(16)
-        self.content_layout.addWidget(self.uninstalled_flow_widget)
+        self.all_flow_widget = QWidget(self.container)
+        self.all_flow_widget.setStyleSheet("background: transparent;")
+        self.all_flow_layout = FlowLayout(self.all_flow_widget, needAni=False)
+        self.all_flow_layout.setContentsMargins(0, 4, 0, 8)
+        self.all_flow_layout.setSpacing(16)
+        self.content_layout.addWidget(self.all_flow_widget)
 
         self.content_layout.addStretch(1)
         self.scroll_area.setWidget(self.container)
@@ -268,94 +268,102 @@ class BoxLobbyInterface(QWidget):
         self.cloud_repos = repos
         self.load_and_render_tools(filter_text=self.search_input.text().strip())
 
+    def _create_card(self, data: dict, is_inst: bool, is_fav: bool, icon_size: int, parent_widget: QWidget) -> ToolCardWidget:
+        name = data.get("name", "")
+        card = ToolCardWidget(data, is_installed=is_inst, is_favorite=is_fav, icon_size=icon_size, parent=parent_widget)
+
+        if is_inst:
+            if name in self.parent_window.running_processes:
+                card.apply_state(ToolCardWidget.STATE_RUNNING)
+                self.parent_window.running_processes[name]["card"] = card
+
+            card.toolClicked.connect(lambda d, inst, c=card: self.parent_window.launch_tool(d, card=c))
+            card.reinstallRequested.connect(self.parent_window.reinstall_tool)
+            card.uninstallRequested.connect(self.parent_window.uninstall_tool)
+        else:
+            card.toolClicked.connect(lambda d, inst: self.parent_window.install_cloud_tool(d))
+            card.installRequested.connect(self.parent_window.install_cloud_tool)
+
+        card.toggleFavoriteRequested.connect(self.parent_window.toggle_favorite)
+        return card
+
     def load_and_render_tools(self, filter_text: str = ""):
         # 1. 清除舊有元件
-        clear_layout(self.installed_flow_layout)
-        clear_layout(self.uninstalled_flow_layout)
+        clear_layout(self.favorites_flow_layout)
+        clear_layout(self.all_flow_layout)
 
         installed_tools = self.parent_window.load_tools()
+        favorites_list = self.parent_window.registry.get("favorites", [])
         icon_size = self.parent_window.settings.get("icon_size", 56)
 
-        # 2. 渲染已安裝區塊 (上方)
-        matched_installed = []
-        for t in installed_tools:
-            name = t.get("name", "")
-            desc = t.get("description", "")
-            if filter_text:
-                if filter_text.lower() not in name.lower() and filter_text.lower() not in desc.lower():
-                    continue
-            matched_installed.append(t)
-
-        self.installed_header.setText(f"🟢 已安裝 ({len(matched_installed)})")
-
-        if matched_installed:
-            for tool in matched_installed:
-                name = tool.get("name", "")
-                card = ToolCardWidget(tool, is_installed=True, icon_size=icon_size, parent=self.installed_flow_widget)
-                
-                # 若該工具目前正在執行中，保持綠色已開啟狀態
-                if name in self.parent_window.running_processes:
-                    card.apply_state(ToolCardWidget.STATE_RUNNING)
-                    self.parent_window.running_processes[name]["card"] = card
-
-                card.toolClicked.connect(lambda d, inst, c=card: self.parent_window.launch_tool(d, card=c))
-                card.reinstallRequested.connect(self.parent_window.reinstall_tool)
-                card.uninstallRequested.connect(self.parent_window.uninstall_tool)
-                self.installed_flow_layout.addWidget(card)
-        else:
-            empty_msg = CaptionLabel("（無符合條件的已安裝小工具）", self.installed_flow_widget)
-            empty_msg.setStyleSheet("color: #888888; padding: 10px;")
-            self.installed_flow_layout.addWidget(empty_msg)
-
-        # 3. 渲染未安裝區塊 (下方) - 全面呈現 JiaSai67 所有可用雲端專案
         cloud_installed_names = [
             os.path.basename(t.get("working_dir", "")).lower()
             for t in installed_tools
             if "cloudtools" in t.get("working_dir", "").lower()
         ]
 
-        matched_uninstalled = []
+        # 整理所有專案清單 (已安裝 + 雲端未安裝)
+        all_items = []
+        for t in installed_tools:
+            all_items.append((t, True))
+
         for repo in self.cloud_repos:
             rname = repo.get("name", "")
-            rdesc = repo.get("description") or ""
-            # 若已經在本地 CloudTools 中安裝，則不在未安裝重複列出
             if rname.lower() in cloud_installed_names:
                 continue
+            all_items.append((repo, False))
+
+        # 篩選與分類
+        matched_all = []
+        matched_favorites = []
+
+        for data, is_inst in all_items:
+            name = data.get("name", "")
+            repo_name = data.get("repo_name", "")
+            desc = data.get("description") or ""
+            is_fav = (name in favorites_list or (repo_name and repo_name in favorites_list))
 
             if filter_text:
-                if filter_text.lower() not in rname.lower() and filter_text.lower() not in rdesc.lower():
+                if filter_text.lower() not in name.lower() and filter_text.lower() not in desc.lower():
                     continue
-            matched_uninstalled.append(repo)
 
-        self.uninstalled_header.setText(f"☁️ 雲端庫 / 未安裝 ({len(matched_uninstalled)})")
+            matched_all.append((data, is_inst, is_fav))
+            if is_fav:
+                matched_favorites.append((data, is_inst, is_fav))
 
-        if matched_uninstalled:
-            for repo in matched_uninstalled:
-                card = ToolCardWidget(repo, is_installed=False, icon_size=icon_size, parent=self.uninstalled_flow_widget)
-                card.toolClicked.connect(lambda d, inst: self.parent_window.install_cloud_tool(d))
-                card.installRequested.connect(self.parent_window.install_cloud_tool)
-                self.uninstalled_flow_layout.addWidget(card)
+        # === 渲染 1: ⭐ 我的收藏 ===
+        self.favorites_header.setText(f"⭐ 我的收藏 ({len(matched_favorites)})")
+        if matched_favorites:
+            for data, is_inst, is_fav in matched_favorites:
+                card = self._create_card(data, is_inst, is_fav, icon_size, self.favorites_flow_widget)
+                self.favorites_flow_layout.addWidget(card)
         else:
-            empty_text = "（所有雲端小工具皆已安裝完畢）" if self.cloud_repos else "（正在向 GitHub 查詢雲端庫...）"
-            empty_msg = CaptionLabel(empty_text, self.uninstalled_flow_widget)
+            empty_text = "（右鍵點擊專案小卡可「加入收藏」）" if not filter_text else "（無符合收藏的專案）"
+            empty_msg = CaptionLabel(empty_text, self.favorites_flow_widget)
             empty_msg.setStyleSheet("color: #888888; padding: 10px;")
-            self.uninstalled_flow_layout.addWidget(empty_msg)
+            self.favorites_flow_layout.addWidget(empty_msg)
+
+        # === 渲染 2: 📦 全部專案 ===
+        self.all_header.setText(f"📦 全部專案 ({len(matched_all)})")
+        if matched_all:
+            for data, is_inst, is_fav in matched_all:
+                card = self._create_card(data, is_inst, is_fav, icon_size, self.all_flow_widget)
+                self.all_flow_layout.addWidget(card)
+        else:
+            empty_msg = CaptionLabel("（無符合條件的專案）", self.all_flow_widget)
+            empty_msg.setStyleSheet("color: #888888; padding: 10px;")
+            self.all_flow_layout.addWidget(empty_msg)
 
     def on_search_changed(self, text: str):
         self.load_and_render_tools(filter_text=text.strip())
 
     def update_icon_size(self, size: int):
-        for i in range(self.installed_flow_layout.count()):
-            item = self.installed_flow_layout.itemAt(i)
-            w = item.widget() if item else None
-            if isinstance(w, ToolCardWidget):
-                w.set_icon_size(size)
-
-        for i in range(self.uninstalled_flow_layout.count()):
-            item = self.uninstalled_flow_layout.itemAt(i)
-            w = item.widget() if item else None
-            if isinstance(w, ToolCardWidget):
-                w.set_icon_size(size)
+        for layout in [self.favorites_flow_layout, self.all_flow_layout]:
+            for i in range(layout.count()):
+                item = layout.itemAt(i)
+                w = item.widget() if item else None
+                if isinstance(w, ToolCardWidget):
+                    w.set_icon_size(size)
 
 
 class AIToolLauncherV2(MSFluentWindow):
@@ -659,32 +667,35 @@ class AIToolLauncherV2(MSFluentWindow):
         for name in stopped_tools:
             self.running_processes.pop(name, None)
 
+    def toggle_favorite(self, tool_data: dict):
+        """
+        切換收藏狀態 (新增 / 取消收藏)
+        """
+        name = tool_data.get("name") or tool_data.get("repo_name", "")
+        repo_name = tool_data.get("repo_name", "")
+        favs = self.registry.setdefault("favorites", [])
+
+        if name in favs:
+            favs.remove(name)
+        elif repo_name and repo_name in favs:
+            favs.remove(repo_name)
+        else:
+            favs.append(name)
+
+        self.save_registry()
+        self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
+
     def install_cloud_tool(self, repo_data: dict):
         repo_name = repo_data.get("name", "小工具")
         
-        # 1. 從未安裝區塊移除卡片
-        for i in range(self.box_lobby.uninstalled_flow_layout.count()):
-            item = self.box_lobby.uninstalled_flow_layout.itemAt(i)
-            w = item.widget() if item else None
-            if isinstance(w, ToolCardWidget) and (w.data.get("name") == repo_name or w.data.get("repo_name") == repo_name):
-                w.deleteLater()
-                break
-
-        # 2. 在「已安裝」區塊建立安裝中卡片
-        temp_tool_data = {
-            "name": repo_name,
-            "repo_name": repo_name,
-            "description": repo_data.get("description", ""),
-            "executable": "",
-            "working_dir": ""
-        }
-        icon_size = self.settings.get("icon_size", 56)
-        installing_card = ToolCardWidget(temp_tool_data, is_installed=False, icon_size=icon_size, parent=self.box_lobby.installed_flow_widget)
-        installing_card.apply_state(ToolCardWidget.STATE_INSTALLING)
-        installing_card.set_install_progress(5, "正在連線...")
-        
-        self.box_lobby.installed_flow_layout.addWidget(installing_card)
-        self.installing_cards[repo_name] = installing_card
+        # 標記正在安裝中的小卡
+        for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.all_flow_layout]:
+            for i in range(layout.count()):
+                item = layout.itemAt(i)
+                w = item.widget() if item else None
+                if isinstance(w, ToolCardWidget) and (w.data.get("name") == repo_name or w.data.get("repo_name") == repo_name):
+                    w.apply_state(ToolCardWidget.STATE_INSTALLING)
+                    w.set_install_progress(5, "正在連線...")
 
         def _on_progress(pct, msg):
             self.installProgressSignal.emit(repo_name, pct, msg)
@@ -695,38 +706,26 @@ class AIToolLauncherV2(MSFluentWindow):
         install_cloud_repo_async(repo_data, self.cloud_tools_dir, sys.executable, _on_finished, _on_progress)
 
     def on_install_progress_slot(self, repo_name: str, pct: int, status_text: str):
-        card = self.installing_cards.get(repo_name)
-        if card:
-            card.set_install_progress(pct, status_text)
+        for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.all_flow_layout]:
+            for i in range(layout.count()):
+                item = layout.itemAt(i)
+                w = item.widget() if item else None
+                if isinstance(w, ToolCardWidget) and (w.data.get("name") == repo_name or w.data.get("repo_name") == repo_name):
+                    w.set_install_progress(pct, status_text)
 
     def on_install_finished_slot(self, success: bool, msg: str, tool_entry: dict, repo_name: str):
-        card = self.installing_cards.pop(repo_name, None)
-
         if success and tool_entry:
             self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != tool_entry.get("name")]
             self.registry.setdefault("tools", []).append(tool_entry)
             self.save_registry()
-
-            if card:
-                card.data = tool_entry
-                card.is_installed = True
-                card.title_label.setText(tool_entry.get("name", card.title_label.text()))
-                card.badge_label.hide()
-                card.apply_state(ToolCardWidget.STATE_IDLE)
-                try:
-                    card.toolClicked.disconnect()
-                except Exception:
-                    pass
-                card.toolClicked.connect(lambda d, inst, c=card: self.launch_tool(d, card=c))
-                card.reinstallRequested.connect(self.reinstall_tool)
-                card.uninstallRequested.connect(self.uninstall_tool)
-                self.box_lobby.installed_header.setText(f"🟢 已安裝 ({self.box_lobby.installed_flow_layout.count()})")
-                self.box_lobby.uninstalled_header.setText(f"☁️ 雲端庫 / 未安裝 ({self.box_lobby.uninstalled_flow_layout.count()})")
-            else:
-                self.box_lobby.refresh_all(show_prompt=False)
+            self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
         else:
-            if card:
-                card.apply_state(ToolCardWidget.STATE_ERROR)
+            for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.all_flow_layout]:
+                for i in range(layout.count()):
+                    item = layout.itemAt(i)
+                    w = item.widget() if item else None
+                    if isinstance(w, ToolCardWidget) and (w.data.get("name") == repo_name or w.data.get("repo_name") == repo_name):
+                        w.apply_state(ToolCardWidget.STATE_ERROR)
             InfoBar.error(
                 title="❌ 安裝失敗",
                 content=msg,

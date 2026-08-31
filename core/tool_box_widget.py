@@ -46,28 +46,31 @@ def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.2
 
 class ToolCardWidget(CardWidget):
     """
-    小工具磁貼卡片 (無任何多餘動畫，純粹極簡、即時、穩定)
-    狀態：
+    小工具磁貼卡片
+    支援狀態：
     1. 未開啟 (IDLE)       - 原色鮮明、精緻半透明磨砂卡片，圖標置中
     2. 已開啟 (RUNNING)    - 翡翠綠 (邊框與標籤)，再次點選直接呼叫軟體置頂
     3. 錯誤   (ERROR)      - 緋紅 (邊框與標籤)
     4. 安裝中 (INSTALLING) - 藍色虛線邊框與進度文字
+    5. 收藏功能 (FAVORITE) - 右鍵新增/取消收藏，右上角點綴金色星標
     """
-    toolClicked = Signal(dict, bool)         # (tool_data, is_installed)
-    installRequested = Signal(dict)          # (repo_data)
-    reinstallRequested = Signal(dict)        # (tool_data)
-    uninstallRequested = Signal(dict)        # (tool_data)
-    cloudIconLoaded = Signal(str)            # (cached_icon_path)
+    toolClicked = Signal(dict, bool)           # (tool_data, is_installed)
+    installRequested = Signal(dict)            # (repo_data)
+    reinstallRequested = Signal(dict)          # (tool_data)
+    uninstallRequested = Signal(dict)          # (tool_data)
+    toggleFavoriteRequested = Signal(dict)     # (tool_data)
+    cloudIconLoaded = Signal(str)              # (cached_icon_path)
 
     STATE_IDLE = "idle"
     STATE_RUNNING = "running"
     STATE_ERROR = "error"
     STATE_INSTALLING = "installing"
 
-    def __init__(self, data: dict, is_installed: bool = True, icon_size: int = 56, parent=None):
+    def __init__(self, data: dict, is_installed: bool = True, is_favorite: bool = False, icon_size: int = 56, parent=None):
         super().__init__(parent)
         self.data = data
         self.is_installed = is_installed
+        self.is_favorite = is_favorite
         self.icon_size = icon_size
         self.current_state = self.STATE_IDLE
         self.install_progress = 0
@@ -117,14 +120,19 @@ class ToolCardWidget(CardWidget):
 
         # 4. ToolTip
         desc = self.data.get("description") or "GitHub 雲端工具"
+        fav_hint = "【⭐ 已收藏】\n" if self.is_favorite else ""
         if self.is_installed:
             exe_path = self.data.get("executable", "")
-            self.setToolTip(f"【{name}】 (已安裝)\n{desc}\n路徑: {exe_path}")
+            self.setToolTip(f"{fav_hint}【{name}】 (已安裝)\n{desc}\n路徑: {exe_path}")
         else:
             url = self.data.get("html_url") or self.data.get("clone_url", "")
-            self.setToolTip(f"【{name}】 (未安裝 - 雲端專案)\n{desc}\n倉庫: {url}")
+            self.setToolTip(f"{fav_hint}【{name}】 (未安裝 - 雲端專案)\n{desc}\n倉庫: {url}")
 
         self.installEventFilter(ToolTipFilter(self, showDelay=250, position=ToolTipPosition.BOTTOM))
+
+    def set_favorite(self, is_favorite: bool):
+        self.is_favorite = is_favorite
+        self.update_icon()
 
     def apply_state(self, state: str):
         """
@@ -220,7 +228,30 @@ class ToolCardWidget(CardWidget):
     def update_icon(self):
         raw_pixmap = self.get_tool_raw_pixmap()
         rounded_pixmap = get_rounded_pixmap(raw_pixmap, self.icon_size)
-        self.icon_label.setPixmap(rounded_pixmap)
+
+        if self.is_favorite:
+            # 在右上角繪製小巧亮眼的金色星標
+            fav_pixmap = QPixmap(rounded_pixmap)
+            painter = QPainter(fav_pixmap)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            star_size = max(14, int(self.icon_size * 0.32))
+
+            # 深色半透明小圓底
+            painter.setBrush(QColor(18, 18, 22, 210))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(self.icon_size - star_size - 1, 1, star_size, star_size)
+
+            # 金色星星
+            painter.setPen(QColor(255, 215, 0))
+            font = painter.font()
+            font.setPixelSize(int(star_size * 0.75))
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(QRectF(self.icon_size - star_size - 1, 1, star_size, star_size), Qt.AlignCenter, "★")
+            painter.end()
+            self.icon_label.setPixmap(fav_pixmap)
+        else:
+            self.icon_label.setPixmap(rounded_pixmap)
 
     def get_tool_raw_pixmap(self) -> QPixmap:
         default_icon = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.png")
@@ -271,6 +302,12 @@ class ToolCardWidget(CardWidget):
     def show_context_menu(self, pos):
         menu = RoundMenu(parent=self)
 
+        # 收藏/取消收藏動作
+        if self.is_favorite:
+            act_fav = Action(FluentIcon.STAR, "⭐ 取消收藏 (Remove Favorite)", triggered=lambda: self.toggleFavoriteRequested.emit(self.data))
+        else:
+            act_fav = Action(FluentIcon.FAVORITE, "⭐ 加入收藏 (Add to Favorite)", triggered=lambda: self.toggleFavoriteRequested.emit(self.data))
+
         if self.is_installed:
             # === 已安裝小工具選單 ===
             act_launch = Action(FluentIcon.PLAY, "啟動工具 (Launch)", triggered=lambda: self.toolClicked.emit(self.data, True))
@@ -280,8 +317,9 @@ class ToolCardWidget(CardWidget):
             act_uninstall = Action(FluentIcon.DELETE, "移除小工具 (Uninstall)", triggered=lambda: self.uninstallRequested.emit(self.data))
 
             menu.addAction(act_launch)
-            menu.addAction(act_reinstall)
+            menu.addAction(act_fav)
             menu.addSeparator()
+            menu.addAction(act_reinstall)
             menu.addAction(act_open_dir)
             menu.addAction(act_copy_path)
             menu.addSeparator()
@@ -293,6 +331,7 @@ class ToolCardWidget(CardWidget):
             act_copy_url = Action(FluentIcon.COPY, "複製倉庫網址 (Copy Git URL)", triggered=self.copy_git_url)
 
             menu.addAction(act_install)
+            menu.addAction(act_fav)
             menu.addSeparator()
             menu.addAction(act_github)
             menu.addAction(act_copy_url)
