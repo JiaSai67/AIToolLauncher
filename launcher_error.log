@@ -1,9 +1,0 @@
-Traceback (most recent call last):
-  File "G:\python\toolLauncher\core\launcher_v2.py", line 204, in on_cloud_repos_fetched
-    self.load_and_render_tools(filter_text=self.search_input.text().strip())
-  File "G:\python\toolLauncher\core\launcher_v2.py", line 208, in load_and_render_tools
-    clear_layout(self.installed_flow_layout)
-  File "G:\python\toolLauncher\core\launcher_v2.py", line 77, in clear_layout
-    w = item.widget()
-        ^^^^^^^^^^^
-AttributeError: 'ToolCardWidget' object has no attribute 'widget'
