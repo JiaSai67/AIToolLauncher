@@ -1,8 +1,0 @@
-Traceback (most recent call last):
-  File "<string>", line 8, in <module>
-  File "G:\python\toolLauncher\2.0\core\launcher_v2.py", line 163, in __init__
-    self.init_window()
-  File "G:\python\toolLauncher\2.0\core\launcher_v2.py", line 184, in init_window
-    self.pin_btn = TransparentToolButton(FluentIcon.PIN, self.titleBar)
-                   ^^^^^^^^^^^^^^^^^^^^^
-NameError: name 'TransparentToolButton' is not defined
