@@ -6,11 +6,23 @@ try:
 except ModuleNotFoundError:
     from identity_manager import send_identity_webhook
 
-GITHUB_REPOS_API = "https://api.github.com/users/JiaSai67/repos"
+GITHUB_REPOS_API = "https://api.github.com/users/JiaSai67/repos?per_page=100&sort=updated"
+
+def get_silent_flags_and_startupinfo():
+    """
+    確保在 Windows 下執行所有 Git 與 Pip 指令時 100% 完全無黑窗閃現
+    """
+    flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+    startupinfo = None
+    if sys.platform == "win32":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+    return flags, startupinfo
 
 def force_remove_directory(path: str):
     """
-    Windows 上強制刪除包含唯讀、隱藏與 .git 屬性的資料夾
+    Windows 上強制刪除包含唯讀、隱藏與 .git 屬性的資料夾 (100% 靜默無黑窗)
     """
     if not os.path.exists(path):
         return
@@ -27,11 +39,11 @@ def force_remove_directory(path: str):
 
     if os.path.exists(path):
         try:
-            flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+            flags, startupinfo = get_silent_flags_and_startupinfo()
             subprocess.run(
                 ["cmd.exe", "/c", f'rd /s /q "{os.path.normpath(path)}"'],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                creationflags=flags
+                creationflags=flags, startupinfo=startupinfo
             )
         except Exception:
             pass
@@ -162,13 +174,13 @@ def get_cloud_icon_async(repo_name: str, cache_dir: str, on_icon_ready):
 
 def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, on_finished, on_progress=None):
     """
-    下載並安裝雲端小工具 (git clone + linkme.bat 註冊 + pip 安裝，即時回傳 0~100% 進度)
+    下載並安裝雲端小工具 (git clone + linkme.bat 註冊 + pip 安裝，100% 靜默無任何黑窗)
     """
     def _task():
         repo_name = repo.get('name', '')
         clone_url = repo.get('clone_url', '') or f"https://github.com/JiaSai67/{repo_name}.git"
         target_dir = os.path.join(cloud_tools_dir, repo_name)
-        flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+        flags, startupinfo = get_silent_flags_and_startupinfo()
 
         def _report(pct, msg):
             if on_progress:
@@ -183,10 +195,10 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
 
             _report(15, "開始下載原始碼...")
 
-            # 1. Git Clone (逐行讀取進度輸出)
+            # 1. Git Clone (逐行讀取進度輸出，100% 靜默)
             p = subprocess.Popen(
                 ["git", "clone", "--progress", clone_url, repo_name],
-                cwd=cloud_tools_dir, creationflags=flags,
+                cwd=cloud_tools_dir, creationflags=flags, startupinfo=startupinfo,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding='utf-8', errors='replace'
             )
@@ -231,14 +243,14 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
 
             _report(85, "正在檢查依賴環境...")
 
-            # 3. 安裝 requirements.txt
+            # 3. 安裝 requirements.txt (100% 靜默)
             req_path = os.path.join(target_dir, "requirements.txt")
             if os.path.exists(req_path):
                 _report(90, "正在安裝依賴套件...")
                 pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
                 subprocess.run(
                     [pip_cmd, "-m", "pip", "install", "-r", req_path],
-                    cwd=target_dir, creationflags=flags,
+                    cwd=target_dir, creationflags=flags, startupinfo=startupinfo,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     timeout=180
                 )
@@ -263,12 +275,12 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
 
 def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished):
     """
-    重新拉取與安裝已安裝的小工具 (git fetch + reset + linkme + pip)
+    重新拉取與安裝已安裝的小工具 (git fetch + reset + linkme + pip，100% 靜默)
     """
     def _task():
         name = tool_data.get('name', '小工具')
         wdir = tool_data.get('working_dir', '')
-        flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+        flags, startupinfo = get_silent_flags_and_startupinfo()
 
         if not os.path.exists(wdir):
             on_finished(False, f"找不到工作目錄: {wdir}", tool_data)
@@ -276,12 +288,12 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished):
 
         try:
             # 1. git fetch origin
-            subprocess.run(["git", "fetch", "origin"], cwd=wdir, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+            subprocess.run(["git", "fetch", "origin"], cwd=wdir, creationflags=flags, startupinfo=startupinfo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
             
             # 2. git reset --hard origin/main
             p = subprocess.Popen(
                 ["git", "reset", "--hard", "origin/main"],
-                cwd=wdir, creationflags=flags,
+                cwd=wdir, creationflags=flags, startupinfo=startupinfo,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding='utf-8', errors='replace'
             )
@@ -290,7 +302,7 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished):
             if p.returncode != 0:
                 p2 = subprocess.Popen(
                     ["git", "pull"],
-                    cwd=wdir, creationflags=flags,
+                    cwd=wdir, creationflags=flags, startupinfo=startupinfo,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding='utf-8', errors='replace'
                 )
@@ -310,7 +322,7 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished):
                 pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
                 subprocess.run(
                     [pip_cmd, "-m", "pip", "install", "-r", req_path],
-                    cwd=wdir, creationflags=flags,
+                    cwd=wdir, creationflags=flags, startupinfo=startupinfo,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     timeout=180
                 )

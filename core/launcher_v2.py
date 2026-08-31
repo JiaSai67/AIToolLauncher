@@ -185,7 +185,7 @@ class BoxLobbyInterface(QWidget):
         # 重新整理按鈕
         self.btn_refresh = TransparentToolButton(FluentIcon.SYNC, self)
         self.btn_refresh.setToolTip("重新整理列表與雲端庫")
-        self.btn_refresh.clicked.connect(self.refresh_all)
+        self.btn_refresh.clicked.connect(lambda: self.refresh_all(show_prompt=True))
         top_bar.addWidget(self.btn_refresh)
 
         self.layout.addLayout(top_bar)
@@ -240,19 +240,20 @@ class BoxLobbyInterface(QWidget):
         self.load_and_render_tools()
         self.fetch_cloud_repos_async()
 
-    def refresh_all(self):
+    def refresh_all(self, show_prompt: bool = False):
         self.parent_window.reload_registry()
         self.fetch_cloud_repos_async()
         self.load_and_render_tools(filter_text=self.search_input.text().strip())
-        InfoBar.info(
-            title="🔄 已重新整理",
-            content="小工具列表與雲端狀態已同步！",
-            orient=Qt.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=2000,
-            parent=self
-        )
+        if show_prompt:
+            InfoBar.info(
+                title="🔄 已重新整理",
+                content="小工具列表與雲端狀態已同步！",
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2000,
+                parent=self
+            )
 
     def fetch_cloud_repos_async(self):
         def _callback(success, data):
@@ -717,12 +718,14 @@ class AIToolLauncherV2(MSFluentWindow):
             self.registry.setdefault("tools", []).append(tool_entry)
             self.save_registry()
 
-            # 3. 完成安裝時：金色鋪滿 ➔ 綠色打勾 ➔ 從下至上平滑覆蓋替換為原生圖標 (完全無彈窗干擾)
+            # 3. 完成安裝時：金色鋪滿 ➔ 綠色打勾 ➔ 從下至上平滑覆蓋替換為原生大圖標 (完全無彈窗干擾、無閃現)
             if card:
+                card.data = tool_entry
+                card.is_installed = True
                 card.set_install_progress(100, "✅ 安裝完成")
-                card.play_install_success_celebration(on_finished=self.box_lobby.refresh_all)
+                card.play_install_success_celebration(on_finished=lambda: self.box_lobby.refresh_all(show_prompt=False))
             else:
-                self.box_lobby.refresh_all()
+                self.box_lobby.refresh_all(show_prompt=False)
         else:
             if card:
                 card.apply_state(ToolCardWidget.STATE_ERROR)
@@ -756,16 +759,7 @@ class AIToolLauncherV2(MSFluentWindow):
     def on_reinstall_finished_slot(self, success: bool, msg: str, updated_tool: dict):
         if success:
             self.save_registry()
-            InfoBar.success(
-                title="🟢 更新完成",
-                content=msg,
-                orient=Qt.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=3500,
-                parent=self
-            )
-            self.box_lobby.refresh_all()
+            self.box_lobby.refresh_all(show_prompt=False)
         else:
             InfoBar.error(
                 title="❌ 更新失敗",
@@ -807,16 +801,7 @@ class AIToolLauncherV2(MSFluentWindow):
         self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != name]
         self.save_registry()
 
-        InfoBar.success(
-            title="🗑️ 已移除小工具",
-            content=f"已成功將 【{name}】 從收納盒移除。",
-            orient=Qt.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=3000,
-            parent=self
-        )
-        self.box_lobby.refresh_all()
+        self.box_lobby.refresh_all(show_prompt=False)
 
         # 3. 未安裝處重新出現的專案執行從中向外彈出動畫 (Popup Expand)
         QTimer.singleShot(100, lambda: self._animate_new_uninstalled_card(name))
