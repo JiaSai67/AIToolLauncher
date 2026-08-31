@@ -19,7 +19,7 @@ except ModuleNotFoundError:
 
 def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.22) -> QPixmap:
     """
-    將任意圖示裁切並繪製為平滑圓角圖示
+    將任意圖示裁切並繪製為最高解析度、鮮明原色的平滑圓角圖示
     """
     if src_pixmap.isNull():
         return src_pixmap
@@ -48,13 +48,15 @@ def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.2
 
 def draw_liquid_fill_icon(src_pixmap: QPixmap, size: int, progress: int,
                           gold_sweep: float = 0.0, flash: float = 0.0,
-                          checkmark_progress: float = 0.0) -> QPixmap:
+                          checkmark_progress: float = 0.0,
+                          reveal_progress: float = 0.0) -> QPixmap:
     """
     繪製多重進度與慶祝特效之圖標：
     1. 填水灌滿 (Liquid Water Fill) 0~100%
     2. 金色光瀑自上而下鋪滿 (Gold Sweep)
-    3. 金光閃爍 (Flash Effect)
+    3. 金光微閃 (Flash Effect)
     4. 綠色圓圈帶打勾動態繪製 (Animated Green Checkmark)
+    5. 從下至上平滑覆蓋替換為原生圖標 (Bottom-to-Top Wipe Reveal)
     """
     if src_pixmap.isNull():
         return src_pixmap
@@ -97,7 +99,7 @@ def draw_liquid_fill_icon(src_pixmap: QPixmap, size: int, progress: int,
 
     # 3. 金色光瀑鋪滿效果 (Gold Sweep Effect 0.0 ~ 1.0)
     if gold_sweep > 0.0:
-        painter.setOpacity(min(0.85, gold_sweep * 0.95))
+        painter.setOpacity(min(0.88, gold_sweep * 0.95))
         painter.setClipPath(clip_path)
 
         sweep_h = size * gold_sweep
@@ -110,14 +112,14 @@ def draw_liquid_fill_icon(src_pixmap: QPixmap, size: int, progress: int,
 
     # 4. 金色閃光特效 (Flash Effect 0.0 ~ 1.0)
     if flash > 0.0:
-        painter.setOpacity(flash * 0.75)
+        painter.setOpacity(flash * 0.6)
         painter.setClipPath(clip_path)
         painter.fillRect(QRectF(0, 0, size, size), QColor(255, 245, 180))
 
     painter.end()
 
     # 5. 綠色圓圈帶打勾動畫 (Animated Green Checkmark 0.0 ~ 1.0)
-    if checkmark_progress > 0.0:
+    if checkmark_progress > 0.0 and reveal_progress < 1.0:
         painter = QPainter(dest)
         painter.setRenderHint(QPainter.Antialiasing, True)
 
@@ -152,12 +154,10 @@ def draw_liquid_fill_icon(src_pixmap: QPixmap, size: int, progress: int,
             p3 = QPointF(center_x + r * 0.5, center_y - r * 0.35)
 
             if tick_ratio <= 0.4:
-                # 繪製前半段小勾
                 sub = tick_ratio / 0.4
                 curr = QPointF(p1.x() + (p2.x() - p1.x()) * sub, p1.y() + (p2.y() - p1.y()) * sub)
                 painter.drawLine(p1, curr)
             else:
-                # 繪製完整小勾 + 後半段長勾
                 painter.drawLine(p1, p2)
                 sub = (tick_ratio - 0.4) / 0.6
                 curr = QPointF(p2.x() + (p3.x() - p2.x()) * sub, p2.y() + (p3.y() - p2.y()) * sub)
@@ -165,8 +165,32 @@ def draw_liquid_fill_icon(src_pixmap: QPixmap, size: int, progress: int,
 
         painter.end()
 
-    # 6. 下載進度文字 (僅在非打勾動畫時顯示)
-    elif progress_ratio < 1.0 or (gold_sweep == 0.0 and flash == 0.0):
+    # 6. 【平滑替換】：完成安裝後從下至上揭示替換為應該出現的原生圖標 (Bottom-to-Top Wipe Reveal)
+    if reveal_progress > 0.0:
+        painter = QPainter(dest)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setClipPath(clip_path)
+
+        reveal_h = size * min(1.0, max(0.0, reveal_progress))
+        reveal_y = size - reveal_h
+
+        # 繪製由下至上展開的原生原色圖標
+        painter.drawPixmap(
+            QRectF(0, reveal_y, size, reveal_h),
+            full_colored,
+            QRectF(0, reveal_y, size, reveal_h)
+        )
+
+        # 微光交界線
+        if reveal_progress < 1.0:
+            painter.setPen(QColor(255, 255, 255, 220))
+            painter.drawLine(0, int(reveal_y), size, int(reveal_y))
+
+        painter.end()
+
+    # 7. 下載進度文字
+    elif progress_ratio < 1.0 or (gold_sweep == 0.0 and flash == 0.0 and checkmark_progress == 0.0 and reveal_progress == 0.0):
         if progress_ratio > 0.0:
             painter = QPainter(dest)
             painter.setRenderHint(QPainter.Antialiasing, True)
@@ -185,11 +209,11 @@ class ToolCardWidget(CardWidget):
     """
     小工具磁貼卡片
     支援狀態與全套動畫：
-    1. 未開啟 (IDLE)       - 預設精緻半透明磨砂卡片，圖標置中
+    1. 未開啟 (IDLE)       - 原色鮮明、精緻半透明磨砂卡片，圖標置中
     2. 已開啟 (RUNNING)    - 翡翠綠 (邊框與光暈)，再次點選直接呼叫軟體置頂
     3. 錯誤   (ERROR)      - 緋紅 (邊框與光暈)
     4. 安裝中 (INSTALLING) - 偏黑專案卡片，以該專案原生圖標進行 0~100% 填水灌滿特效
-    5. 完成安裝慶祝動畫    - 金色光瀑鋪滿 ➔ 閃光 ➔ 綠色圓圈帶打勾動畫
+    5. 完成安裝慶祝動畫    - 金色光瀑 ➔ 綠色打勾 ➔ 從下至上平滑替換為原生圖標
     6. 新增/移除卡片動畫   - 彈出向外擴展 (Pop Out) 與 內縮消失 (Pop In)
     """
     toolClicked = Signal(dict, bool)         # (tool_data, is_installed)
@@ -217,9 +241,7 @@ class ToolCardWidget(CardWidget):
         self._gold_sweep = 0.0
         self._flash_intensity = 0.0
         self._checkmark_progress = 0.0
-
-        self.opacity_effect = QGraphicsOpacityEffect(self)
-        self.setGraphicsEffect(self.opacity_effect)
+        self._reveal_progress = 0.0
 
         self.setCursor(Qt.PointingHandCursor)
         self.cloudIconLoaded.connect(self.on_cloud_icon_ready)
@@ -290,8 +312,15 @@ class ToolCardWidget(CardWidget):
 
     def set_card_opacity(self, val: float):
         self._card_opacity = val
-        if self.opacity_effect:
-            self.opacity_effect.setOpacity(val)
+        if val < 1.0:
+            if not self.graphicsEffect():
+                effect = QGraphicsOpacityEffect(self)
+                effect.setOpacity(val)
+                self.setGraphicsEffect(effect)
+            else:
+                self.graphicsEffect().setOpacity(val)
+        else:
+            self.setGraphicsEffect(None)
 
     cardOpacity = Property(float, get_card_opacity, set_card_opacity)
 
@@ -321,6 +350,15 @@ class ToolCardWidget(CardWidget):
         self.update_icon()
 
     checkmarkProgress = Property(float, get_checkmark_progress, set_checkmark_progress)
+
+    def get_reveal_progress(self) -> float:
+        return self._reveal_progress
+
+    def set_reveal_progress(self, val: float):
+        self._reveal_progress = val
+        self.update_icon()
+
+    revealProgress = Property(float, get_reveal_progress, set_reveal_progress)
 
     def paintEvent(self, event):
         """
@@ -371,7 +409,7 @@ class ToolCardWidget(CardWidget):
 
     def shrink_collapse_animation(self, on_finished=None):
         """
-        向內收縮並啵一聲消失效果 (Pop In / Shrink Animation)
+        向內收縮並消失效果 (Pop In / Shrink Animation)
         """
         try:
             self.anim_shrink_group = QParallelAnimationGroup(self)
@@ -401,36 +439,39 @@ class ToolCardWidget(CardWidget):
         """
         完成安裝慶祝動畫：
         1. 金色由上至下鋪滿 (Gold Sweep)
-        2. 金色閃光 (Flash)
-        3. 綠色圓圈帶打勾動態繪製 (Animated Green Checkmark)
-        4. 復原為正式已安裝卡片
+        2. 綠色圓圈帶打勾動態繪製 (Animated Green Checkmark)
+        3. 停頓欣賞 350ms
+        4. 從下至上平滑覆蓋替換為原本應該出現的圖標 (Bottom-to-Top Wipe Reveal)
+        5. 平滑轉正為已安裝卡片
         """
         try:
             self.celeb_group = QSequentialAnimationGroup(self)
 
-            # 1. 金色鋪滿動畫 (350ms)
+            # 1. 金色鋪滿動畫 (320ms)
             anim_sweep = QPropertyAnimation(self, b"goldSweep")
-            anim_sweep.setDuration(350)
+            anim_sweep.setDuration(320)
             anim_sweep.setStartValue(0.0)
             anim_sweep.setEndValue(1.0)
             anim_sweep.setEasingCurve(QEasingCurve.OutQuad)
 
-            # 2. 閃光動畫 (180ms)
-            anim_flash = QPropertyAnimation(self, b"flashIntensity")
-            anim_flash.setDuration(180)
-            anim_flash.setStartValue(1.0)
-            anim_flash.setEndValue(0.0)
-
-            # 3. 綠色圓圈帶打勾繪製動畫 (450ms)
+            # 2. 綠色圓圈帶打勾繪製動畫 (400ms)
             anim_check = QPropertyAnimation(self, b"checkmarkProgress")
-            anim_check.setDuration(450)
+            anim_check.setDuration(400)
             anim_check.setStartValue(0.0)
             anim_check.setEndValue(1.0)
             anim_check.setEasingCurve(QEasingCurve.OutCubic)
 
+            # 3. 【從下至上平滑覆蓋替換為原生圖標】(420ms)
+            anim_reveal = QPropertyAnimation(self, b"revealProgress")
+            anim_reveal.setDuration(420)
+            anim_reveal.setStartValue(0.0)
+            anim_reveal.setEndValue(1.0)
+            anim_reveal.setEasingCurve(QEasingCurve.InOutCubic)
+
             self.celeb_group.addAnimation(anim_sweep)
-            self.celeb_group.addAnimation(anim_flash)
             self.celeb_group.addAnimation(anim_check)
+            self.celeb_group.addPause(350)
+            self.celeb_group.addAnimation(anim_reveal)
 
             def _after_celeb():
                 def _restore():
@@ -438,6 +479,7 @@ class ToolCardWidget(CardWidget):
                         self.set_gold_sweep(0.0)
                         self.set_flash_intensity(0.0)
                         self.set_checkmark_progress(0.0)
+                        self.set_reveal_progress(0.0)
                         self.apply_state(self.STATE_IDLE)
                     except Exception:
                         pass
@@ -446,7 +488,7 @@ class ToolCardWidget(CardWidget):
                             on_finished()
                         except Exception:
                             pass
-                QTimer.singleShot(500, _restore)
+                QTimer.singleShot(100, _restore)
 
             self.celeb_group.finished.connect(_after_celeb)
             self.celeb_group.start()
@@ -511,16 +553,16 @@ class ToolCardWidget(CardWidget):
             self.update_icon()
 
         else:
-            # ⚪ 未開啟 (預設半透明壓克力卡片，圖標置中)
+            # ⚪ 未開啟 (鮮明原色、預設精緻半透明磨砂卡片)
             self.setStyleSheet("""
                 ToolCardWidget {
-                    background-color: rgba(255, 255, 255, 0.04);
+                    background-color: rgba(255, 255, 255, 0.05);
                     border: 1px solid rgba(255, 255, 255, 0.08);
                     border-radius: 8px;
                 }
                 ToolCardWidget:hover {
-                    background-color: rgba(255, 255, 255, 0.09);
-                    border: 1px solid rgba(255, 255, 255, 0.16);
+                    background-color: rgba(255, 255, 255, 0.11);
+                    border: 1px solid rgba(255, 255, 255, 0.18);
                 }
             """)
             if not self.is_installed:
@@ -550,16 +592,21 @@ class ToolCardWidget(CardWidget):
 
     def update_icon(self):
         raw_pixmap = self.get_tool_raw_pixmap()
-        if self.current_state == self.STATE_INSTALLING or self._gold_sweep > 0.0 or self._checkmark_progress > 0.0:
-            # 呈現 填水 / 金色光瀑 / 閃光 / 綠色打勾 特效圖標
+        if (self.current_state == self.STATE_INSTALLING or
+            self._gold_sweep > 0.0 or
+            self._checkmark_progress > 0.0 or
+            self._reveal_progress > 0.0):
+            # 呈現 填水 / 金色光瀑 / 綠色打勾 / 從下至上平滑替換 特效
             water_pixmap = draw_liquid_fill_icon(
                 raw_pixmap, self.icon_size, self.install_progress,
                 gold_sweep=self._gold_sweep,
                 flash=self._flash_intensity,
-                checkmark_progress=self._checkmark_progress
+                checkmark_progress=self._checkmark_progress,
+                reveal_progress=self._reveal_progress
             )
             self.icon_label.setPixmap(water_pixmap)
         else:
+            # 最高解析度鮮明原色
             rounded_pixmap = get_rounded_pixmap(raw_pixmap, self.icon_size)
             self.icon_label.setPixmap(rounded_pixmap)
 

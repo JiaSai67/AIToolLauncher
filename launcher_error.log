@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "G:\python\toolLauncher\core\launcher_v2.py", line 732, in on_install_finished_slot
+    card.set_install_progress(100, "✅ 安裝完成")
+  File "G:\python\toolLauncher\core\tool_box_widget.py", line 544, in set_install_progress
+    self.badge_label.setText(text)
+RuntimeError: libshiboken: Internal C++ object (CaptionLabel) already deleted.

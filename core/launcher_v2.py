@@ -717,17 +717,7 @@ class AIToolLauncherV2(MSFluentWindow):
             self.registry.setdefault("tools", []).append(tool_entry)
             self.save_registry()
 
-            InfoBar.success(
-                title="🎉 安裝完成",
-                content=msg,
-                orient=Qt.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=4000,
-                parent=self
-            )
-
-            # 3. 完成安裝時：金色鋪滿 ➔ 閃光 ➔ 綠色圓圈帶打勾慶祝動畫
+            # 3. 完成安裝時：金色鋪滿 ➔ 綠色打勾 ➔ 從下至上平滑覆蓋替換為原生圖標 (完全無彈窗干擾)
             if card:
                 card.set_install_progress(100, "✅ 安裝完成")
                 card.play_install_success_celebration(on_finished=self.box_lobby.refresh_all)
