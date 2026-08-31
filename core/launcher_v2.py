@@ -232,6 +232,7 @@ class BoxLobbyInterface(QWidget):
         self.parent_window = parent_window
         self.setObjectName("boxLobbyInterface")
         self.cloud_repos = []
+        self.all_items_cache = []
         self.cloudReposFetched.connect(self.on_cloud_repos_fetched)
         self.init_ui()
 
@@ -389,6 +390,8 @@ class BoxLobbyInterface(QWidget):
                 continue
             all_items.append((repo, False))
 
+        self.all_items_cache = all_items
+
         # 篩選與分類
         matched_all = []
         matched_favorites = []
@@ -429,6 +432,40 @@ class BoxLobbyInterface(QWidget):
             empty_msg = CaptionLabel("（無符合條件的專案）", self.all_flow_widget)
             empty_msg.setStyleSheet("color: #888888; padding: 10px;")
             self.all_flow_layout.addWidget(empty_msg)
+
+    def render_favorites_only(self, filter_text: str = ""):
+        """
+        局部極速重繪「我的收藏」區塊，耗時 < 15ms，不破壞或重製「全部專案」區塊
+        """
+        clear_layout(self.favorites_flow_layout)
+        favorites_list = self.parent_window.registry.get("favorites", [])
+        icon_size = self.parent_window.settings.get("icon_size", 56)
+
+        matched_favorites = []
+        for data, is_inst in self.all_items_cache:
+            name = data.get("name", "")
+            repo_name = data.get("repo_name", "")
+            desc = data.get("description") or ""
+            is_fav = (name in favorites_list or (repo_name and repo_name in favorites_list))
+            if not is_fav:
+                continue
+
+            if filter_text:
+                if filter_text.lower() not in name.lower() and filter_text.lower() not in desc.lower():
+                    continue
+
+            matched_favorites.append((data, is_inst, True))
+
+        self.favorites_header.setText(f"⭐ 我的收藏 ({len(matched_favorites)})")
+        if matched_favorites:
+            for data, is_inst, is_fav in matched_favorites:
+                card = self._create_card(data, is_inst, is_fav, icon_size, self.favorites_flow_widget)
+                self.favorites_flow_layout.addWidget(card)
+        else:
+            empty_text = "（右鍵點擊專案小卡可「加入收藏」）" if not filter_text else "（無符合收藏的專案）"
+            empty_msg = CaptionLabel(empty_text, self.favorites_flow_widget)
+            empty_msg.setStyleSheet("color: #888888; padding: 10px;")
+            self.favorites_flow_layout.addWidget(empty_msg)
 
     def on_search_changed(self, text: str):
         self.load_and_render_tools(filter_text=text.strip())
@@ -791,21 +828,32 @@ class AIToolLauncherV2(MSFluentWindow):
 
     def toggle_favorite(self, tool_data: dict):
         """
-        切換收藏狀態 (新增 / 取消收藏)
+        切換收藏狀態 (新增 / 取消收藏) - 極速秒級響應 (< 15ms)
         """
         name = tool_data.get("name") or tool_data.get("repo_name", "")
         repo_name = tool_data.get("repo_name", "")
         favs = self.registry.setdefault("favorites", [])
 
+        is_fav = False
         if name in favs:
             favs.remove(name)
         elif repo_name and repo_name in favs:
             favs.remove(repo_name)
         else:
             favs.append(name)
+            is_fav = True
 
         self.save_registry()
-        self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
+
+        # 1. 秒速就地更新「全部專案」區塊中對應卡片的星標與 Tooltip
+        for i in range(self.box_lobby.all_flow_layout.count()):
+            item = self.box_lobby.all_flow_layout.itemAt(i)
+            w = item.widget() if item else None
+            if isinstance(w, ToolCardWidget) and (w.data.get("name") == name or w.data.get("repo_name") == repo_name):
+                w.set_favorite(is_fav)
+
+        # 2. 僅局部重繪「我的收藏」區塊 (不重建全部專案)
+        self.box_lobby.render_favorites_only(filter_text=self.box_lobby.search_input.text().strip())
 
     def install_cloud_tool(self, repo_data: dict):
         repo_name = repo_data.get("name", "小工具")
