@@ -306,15 +306,19 @@ class BoxLobbyInterface(QWidget):
             empty_msg.setStyleSheet("color: #888888; padding: 10px;")
             self.installed_flow_layout.addWidget(empty_msg)
 
-        # 3. 渲染未安裝區塊 (下方)
-        installed_names = [t.get("name", "").lower() for t in installed_tools]
-        installed_wdirs = [os.path.basename(t.get("working_dir", "")).lower() for t in installed_tools]
+        # 3. 渲染未安裝區塊 (下方) - 全面呈現 JiaSai67 所有可用雲端專案
+        cloud_installed_names = [
+            os.path.basename(t.get("working_dir", "")).lower()
+            for t in installed_tools
+            if "cloudtools" in t.get("working_dir", "").lower()
+        ]
 
         matched_uninstalled = []
         for repo in self.cloud_repos:
             rname = repo.get("name", "")
             rdesc = repo.get("description") or ""
-            if rname.lower() in installed_names or rname.lower() in installed_wdirs:
+            # 若已經在本地 CloudTools 中安裝，則不在未安裝重複列出
+            if rname.lower() in cloud_installed_names:
                 continue
 
             if filter_text:
@@ -657,15 +661,16 @@ class AIToolLauncherV2(MSFluentWindow):
     def install_cloud_tool(self, repo_data: dict):
         repo_name = repo_data.get("name", "小工具")
         
-        # 1. 立即在「已安裝」類別建立一個偏黑的專案卡片，以 0~100% 填水灌滿圖標呈現進度
+        # 1. 立即在「已安裝」類別建立一個偏黑的專案卡片，以該專案的專屬圖標進行 0~100% 填水灌滿
         temp_tool_data = {
             "name": repo_name,
+            "repo_name": repo_name,
             "description": repo_data.get("description", ""),
             "executable": "",
             "working_dir": ""
         }
         icon_size = self.settings.get("icon_size", 56)
-        installing_card = ToolCardWidget(temp_tool_data, is_installed=True, icon_size=icon_size, parent=self.box_lobby.installed_flow_widget)
+        installing_card = ToolCardWidget(temp_tool_data, is_installed=False, icon_size=icon_size, parent=self.box_lobby.installed_flow_widget)
         installing_card.apply_state(ToolCardWidget.STATE_INSTALLING)
         installing_card.set_install_progress(5, "正在連線...")
         

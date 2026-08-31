@@ -46,7 +46,7 @@ def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.2
 def draw_liquid_fill_icon(src_pixmap: QPixmap, size: int, progress: int) -> QPixmap:
     """
     繪製 0~100% 填水灌滿 (Liquid Water Fill) 效果的圖標
-    底層為暗化/偏黑圖標，頂層由下而上依進度比例填滿亮色圖標，並疊加清晰進度文字
+    使用該專案的原生圖標進行灌滿：底層為暗化偏黑圖標，頂層由下而上依進度比例填滿亮色圖標
     """
     if src_pixmap.isNull():
         return src_pixmap
@@ -109,7 +109,7 @@ class ToolCardWidget(CardWidget):
     1. 未開啟 (IDLE)       - 預設精緻半透明磨砂卡片，圖標置中
     2. 已開啟 (RUNNING)    - 翡翠綠 (邊框與光暈)，再次點選直接呼叫軟體置頂
     3. 錯誤   (ERROR)      - 緋紅 (邊框與光暈)
-    4. 安裝中 (INSTALLING) - 偏黑專案卡片，以 0~100% 填水灌滿圖標特效呈現進度
+    4. 安裝中 (INSTALLING) - 偏黑專案卡片，以該專案原生圖標進行 0~100% 填水灌滿特效
     """
     toolClicked = Signal(dict, bool)         # (tool_data, is_installed)
     installRequested = Signal(dict)          # (repo_data)
@@ -151,11 +151,10 @@ class ToolCardWidget(CardWidget):
         self.update_icon()
         self.layout.addWidget(self.icon_label, 0, Qt.AlignCenter)
 
-        # 若為未安裝的雲端專案，非同步嘗試載入 GitHub 上的真實圖示
-        if not self.is_installed:
-            repo_name = self.data.get("name", "")
-            cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "cache", "icons")
-            get_cloud_icon_async(repo_name, cache_dir, lambda p: self.cloudIconLoaded.emit(p))
+        # 非同步預載入 GitHub 雲端真實圖示
+        repo_name = self.data.get("repo_name") or self.data.get("name", "")
+        cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "cache", "icons")
+        get_cloud_icon_async(repo_name, cache_dir, lambda p: self.cloudIconLoaded.emit(p))
 
         # 2. 名稱 (置中)
         name = self.data.get("name", "未命名工具")
@@ -281,7 +280,7 @@ class ToolCardWidget(CardWidget):
     def update_icon(self):
         raw_pixmap = self.get_tool_raw_pixmap()
         if self.current_state == self.STATE_INSTALLING:
-            # 呈現 0~100% 填水灌滿圖標
+            # 呈現 0~100% 填水灌滿圖標 (使用該專案自己的圖標)
             water_pixmap = draw_liquid_fill_icon(raw_pixmap, self.icon_size, self.install_progress)
             self.icon_label.setPixmap(water_pixmap)
         else:
@@ -290,26 +289,30 @@ class ToolCardWidget(CardWidget):
 
     def get_tool_raw_pixmap(self) -> QPixmap:
         default_icon = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.png")
-        if self.is_installed:
-            working_dir = self.data.get("working_dir", "")
+        repo_name = self.data.get("repo_name") or self.data.get("name", "")
+
+        # 1. 優先檢查本地快取的專案專屬圖示 (resources/cache/icons/{repo_name}.png)
+        cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "cache", "icons")
+        for cand in [repo_name, repo_name.replace(" ", ""), self.data.get("name", "")]:
+            if cand:
+                cached_file = os.path.join(cache_dir, f"{cand}.png")
+                if os.path.exists(cached_file) and os.path.getsize(cached_file) > 0:
+                    return QPixmap(cached_file)
+
+        # 2. 檢查工作目錄內的圖示
+        working_dir = self.data.get("working_dir", "")
+        if working_dir and os.path.exists(working_dir):
             candidate_paths = [
                 os.path.join(working_dir, "assets", "icon.png"),
                 os.path.join(working_dir, "icon", "mic.png"),
                 os.path.join(working_dir, "resources", "icon.png"),
                 os.path.join(working_dir, "assets", "icon.ico"),
                 os.path.join(working_dir, "icon.png"),
-                os.path.join(working_dir, "app.ico"),
-                default_icon
+                os.path.join(working_dir, "app.ico")
             ]
             for p in candidate_paths:
                 if os.path.exists(p):
                     return QPixmap(p)
-        else:
-            # 檢查是否有快取的雲端圖示
-            repo_name = self.data.get("name", "")
-            cached_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "cache", "icons", f"{repo_name}.png")
-            if os.path.exists(cached_file):
-                return QPixmap(cached_file)
 
         return QPixmap(default_icon)
 
