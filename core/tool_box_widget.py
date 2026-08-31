@@ -186,7 +186,7 @@ class ToolCardWidget(CardWidget):
     2. 已開啟 (RUNNING)    - 翡翠綠 (邊框與光暈)，再次點選直接呼叫軟體置頂
     3. 錯誤   (ERROR)      - 緋紅 (邊框與光暈)
     4. 安裝中 (INSTALLING) - 偏黑專案卡片，以該專案原生圖標進行 0~100% 填水灌滿特效
-    5. 完成安裝慶祝動畫    - 金色光瀑 ➔ 綠色打勾 ➔ 整張藍邊小卡由下至上平滑覆蓋替換為已安裝小卡 (圖三)
+    5. 完成安裝慶祝動畫    - 金色光瀑 ➔ 綠色打勾 ➔ 由上至下乾淨切換替換無動畫的小卡狀態 (圖三)
     6. 新增/移除卡片動畫   - 彈出向外擴展 (Pop Out) 與 內縮消失 (Pop In)
     """
     toolClicked = Signal(dict, bool)         # (tool_data, is_installed)
@@ -215,6 +215,7 @@ class ToolCardWidget(CardWidget):
         self._flash_intensity = 0.0
         self._checkmark_progress = 0.0
         self._card_reveal_progress = 0.0
+        self._installing_card_pixmap = None
         self._target_card_pixmap = None
 
         self.setCursor(Qt.PointingHandCursor)
@@ -334,9 +335,9 @@ class ToolCardWidget(CardWidget):
 
     cardRevealProgress = Property(float, get_card_reveal_progress, set_card_reveal_progress)
 
-    def generate_target_card_pixmap(self, final_name: str, raw_icon: QPixmap) -> QPixmap:
+    def generate_installing_card_pixmap(self) -> QPixmap:
         """
-        生成目標圖三小卡 (已安裝狀態) 之高解析度靜態快照，用於由下而上整卡平滑替換
+        生成安裝中狀態 (圖二) 之精確快照：包含藍色虛線邊框、偏黑背景、綠色打勾金色圖標、狀態標籤
         """
         w, h = self.width(), self.height()
         pix = QPixmap(w, h)
@@ -346,20 +347,71 @@ class ToolCardWidget(CardWidget):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
-        # 1. 繪製標準已安裝壓克力卡片背景與細緻邊框 (圖三背景)
+        # 1. 偏黑背景 + 藍色虛線框
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(1, 1, w - 2, h - 2), 8, 8)
+        painter.fillPath(path, QColor(18, 18, 20, 200))
+        pen = QPen(QColor(96, 205, 255, 160), 1.5, Qt.DashLine)
+        painter.setPen(pen)
+        painter.drawPath(path)
+
+        # 2. 金色鋪滿 + 綠色打勾慶祝圖標
+        raw_icon = self.get_tool_raw_pixmap()
+        icon_pix = draw_liquid_fill_icon(
+            raw_icon, self.icon_size, 100,
+            gold_sweep=1.0, flash=0.0, checkmark_progress=1.0
+        )
+        ix = (w - self.icon_size) // 2
+        iy = 8
+        painter.drawPixmap(ix, iy, icon_pix)
+
+        # 3. 專案名稱
+        painter.setPen(QColor(255, 255, 255, 240))
+        font = painter.font()
+        font.setBold(True)
+        font.setPixelSize(12)
+        painter.setFont(font)
+        name = self.title_label.text()
+        title_rect = QRectF(6, iy + self.icon_size + 4, w - 12, 18)
+        painter.drawText(title_rect, Qt.AlignHCenter | Qt.AlignVCenter, name)
+
+        # 4. 安裝完成綠色標籤
+        painter.setPen(QColor(96, 205, 255, 240))
+        font_b = painter.font()
+        font_b.setBold(True)
+        font_b.setPixelSize(10)
+        painter.setFont(font_b)
+        badge_rect = QRectF(6, iy + self.icon_size + 24, w - 12, 16)
+        painter.drawText(badge_rect, Qt.AlignHCenter | Qt.AlignVCenter, "✅ 安裝完成")
+        painter.end()
+        return pix
+
+    def generate_target_card_pixmap(self, final_name: str, raw_icon: QPixmap) -> QPixmap:
+        """
+        生成目標已安裝狀態 (圖三) 之精確快照：包含標準細緻壓克力卡片、鮮明原生大圖標、正式專案標題、無標籤
+        """
+        w, h = self.width(), self.height()
+        pix = QPixmap(w, h)
+        pix.fill(Qt.transparent)
+
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        # 1. 標準已安裝壓克力卡片背景與細緻邊框 (圖三背景)
         path = QPainterPath()
         path.addRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 8, 8)
         painter.fillPath(path, QColor(255, 255, 255, 14))
         painter.setPen(QPen(QColor(255, 255, 255, 22), 1))
         painter.drawPath(path)
 
-        # 2. 繪製居中原生大圖標 (圖三圖標)
+        # 2. 居中原生大圖標 (圖三圖標)
         icon_pix = get_rounded_pixmap(raw_icon, self.icon_size)
         ix = (w - self.icon_size) // 2
         iy = 8
         painter.drawPixmap(ix, iy, icon_pix)
 
-        # 3. 繪製置中正式標題 (圖三文字)
+        # 3. 居中正式標題 (圖三文字)
         painter.setPen(QColor(255, 255, 255, 240))
         font = painter.font()
         font.setBold(True)
@@ -373,8 +425,49 @@ class ToolCardWidget(CardWidget):
 
     def paintEvent(self, event):
         """
-        支援以中心為錨點進行平滑縮放動畫 ＆ 整張小卡由下至上平滑覆蓋替換 (圖二 ➔ 圖三)
+        支援以中心為錨點進行平滑縮放動畫 ＆ 由上至下非重疊乾淨切換替換無動畫的小卡狀態 (圖二 ➔ 圖三)
         """
+        # 1. 若處於由上至下整卡切換動畫中，以雙層非重疊 Split-Wipe 乾淨繪製 (絕無重疊感)
+        if self._card_reveal_progress > 0.0 and self._target_card_pixmap and self._installing_card_pixmap:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+            w = self.width()
+            h = self.height()
+            sweep_y = h * min(1.0, max(0.0, self._card_reveal_progress))
+
+            card_path = QPainterPath()
+            card_path.addRoundedRect(QRectF(0, 0, w, h), 8, 8)
+            painter.setClipPath(card_path)
+
+            # (A) 上半部：由上而下展開的全新無動畫已安裝卡片 (圖三) [0 .. sweep_y]
+            if sweep_y > 0:
+                painter.save()
+                clip_top = QPainterPath()
+                clip_top.addRect(QRectF(0, 0, w, sweep_y))
+                painter.setClipPath(clip_top, Qt.IntersectClip)
+                painter.drawPixmap(0, 0, self._target_card_pixmap)
+                painter.restore()
+
+            # (B) 下半部：尚未被覆蓋的原安裝中小卡 (圖二) [sweep_y .. h]
+            if sweep_y < h:
+                painter.save()
+                clip_bottom = QPainterPath()
+                clip_bottom.addRect(QRectF(0, sweep_y, w, h - sweep_y))
+                painter.setClipPath(clip_bottom, Qt.IntersectClip)
+                painter.drawPixmap(0, 0, self._installing_card_pixmap)
+                painter.restore()
+
+            # (C) 由上而下的水平掃描微光線
+            if self._card_reveal_progress < 1.0:
+                painter.setPen(QPen(QColor(96, 205, 255, 230), 1.5))
+                painter.drawLine(0, int(sweep_y), w, int(sweep_y))
+
+            painter.end()
+            return
+
+        # 2. 一般狀態正常繪製
         if self._scale_factor != 1.0:
             painter = QPainter(self)
             painter.setRenderHint(QPainter.Antialiasing, True)
@@ -388,35 +481,6 @@ class ToolCardWidget(CardWidget):
             painter.end()
         else:
             super().paintEvent(event)
-
-        # 【關鍵：整張有藍邊的小卡由下至上平滑覆蓋替換為圖三已安裝小卡】
-        if self._card_reveal_progress > 0.0 and self._target_card_pixmap:
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-
-            w = self.width()
-            h = self.height()
-            reveal_h = h * min(1.0, max(0.0, self._card_reveal_progress))
-            reveal_y = h - reveal_h
-
-            clip_path = QPainterPath()
-            clip_path.addRoundedRect(QRectF(0, 0, w, h), 8, 8)
-            painter.setClipPath(clip_path)
-
-            # 由下而上繪製完整的圖三小卡
-            painter.drawPixmap(
-                QRectF(0, reveal_y, w, reveal_h),
-                self._target_card_pixmap,
-                QRectF(0, reveal_y, w, reveal_h)
-            )
-
-            # 水平推升微光交界線
-            if self._card_reveal_progress < 1.0:
-                painter.setPen(QPen(QColor(96, 205, 255, 220), 1.5))
-                painter.drawLine(0, int(reveal_y), w, int(reveal_y))
-
-            painter.end()
 
     # === 動畫流程 Animation Helpers ===
     def popup_expand_animation(self, on_finished=None):
@@ -480,15 +544,13 @@ class ToolCardWidget(CardWidget):
         完成安裝慶祝動畫：
         1. 金色由上至下鋪滿圖標 (Gold Sweep 300ms)
         2. 綠色圓圈帶打勾動態繪製 (Animated Green Checkmark 350ms)
-        3. 停頓欣賞 300ms (圖二)
-        4. 【整張有藍色虛線邊框的小卡由下至上平滑覆蓋替換為圖三已安裝小卡】(450ms)
+        3. 停頓欣賞 250ms (圖二)
+        4. 【由上而下乾淨切換替換無動畫的小卡狀態 (圖三)】(420ms，零重疊感)
         5. 完成後卡片就地轉正為正式已安裝卡片，完全不重刷介面與佈局
         """
         try:
-            # 準備目標圖三小卡的快照
             final_name = self.data.get("name", self.title_label.text())
             raw_icon = self.get_tool_raw_pixmap()
-            self._target_card_pixmap = self.generate_target_card_pixmap(final_name, raw_icon)
 
             self.celeb_group = QSequentialAnimationGroup(self)
 
@@ -506,17 +568,24 @@ class ToolCardWidget(CardWidget):
             anim_check.setEndValue(1.0)
             anim_check.setEasingCurve(QEasingCurve.OutCubic)
 
-            # 3. 【整張小卡由下至上替換 (圖二 ➔ 圖三)】(450ms)
+            # 3. 【在動畫結束時，由上而下乾淨替換無動畫的小卡狀態 (420ms)】
             anim_card_reveal = QPropertyAnimation(self, b"cardRevealProgress")
-            anim_card_reveal.setDuration(450)
+            anim_card_reveal.setDuration(420)
             anim_card_reveal.setStartValue(0.0)
             anim_card_reveal.setEndValue(1.0)
             anim_card_reveal.setEasingCurve(QEasingCurve.InOutCubic)
 
+            def _prepare_split_wipe():
+                # 建立兩層精確快照，確保無任何重疊感
+                self._installing_card_pixmap = self.generate_installing_card_pixmap()
+                self._target_card_pixmap = self.generate_target_card_pixmap(final_name, raw_icon)
+
             self.celeb_group.addAnimation(anim_sweep)
             self.celeb_group.addAnimation(anim_check)
-            self.celeb_group.addPause(300)
+            self.celeb_group.addPause(250)
             self.celeb_group.addAnimation(anim_card_reveal)
+
+            anim_check.finished.connect(_prepare_split_wipe)
 
             def _after_celeb():
                 try:
@@ -524,10 +593,11 @@ class ToolCardWidget(CardWidget):
                     self._flash_intensity = 0.0
                     self._checkmark_progress = 0.0
                     self._card_reveal_progress = 0.0
+                    self._installing_card_pixmap = None
                     self._target_card_pixmap = None
                     self.current_state = self.STATE_IDLE
-                    self.badge_label.hide()
                     self.title_label.setText(final_name)
+                    self.badge_label.hide()
                     self.apply_state(self.STATE_IDLE)
                 except Exception:
                     pass
