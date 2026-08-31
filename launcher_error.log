@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "G:\python\toolLauncher\core\tool_box_widget.py", line 299, in mousePressEvent
+    if self.current_state != self.STATE_INSTALLING:
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\python\toolLauncher\core\tool_box_widget.py", line 309, in show_context_menu
+    if event.button() == Qt.LeftButton:
+                         ^^^^^^^^^^^^^^^
+  File "C:\Program Files\Python311\Lib\enum.py", line 786, in __getattr__
+    raise AttributeError(name) from None
+AttributeError: FAVORITE

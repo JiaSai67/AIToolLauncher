@@ -415,9 +415,14 @@ class AIToolLauncherV2(MSFluentWindow):
 
     def init_window(self):
         self.setWindowTitle(f"AI Tool Launcher 2.0 [收納盒模式] v{VERSION}")
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.png")
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
+        icon_ico = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.ico")
+        icon_png = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.png")
+        icon_file = icon_ico if os.path.exists(icon_ico) else icon_png
+        if os.path.exists(icon_file):
+            app_icon = QIcon(icon_file)
+            self.setWindowIcon(app_icon)
+            if hasattr(self, 'titleBar') and self.titleBar:
+                self.titleBar.setIcon(app_icon)
 
         self.resize(960, 680)
         self.setMinimumSize(740, 520)
@@ -432,6 +437,26 @@ class AIToolLauncherV2(MSFluentWindow):
         self.update_pin_button_state()
 
         self.apply_live_settings(self.settings)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if sys.platform == "win32":
+            try:
+                hwnd = int(self.winId())
+                icon_ico = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.ico")
+                if os.path.exists(icon_ico):
+                    LR_LOADFROMFILE = 0x0010
+                    IMAGE_ICON = 1
+                    WM_SETICON = 0x0080
+                    ICON_SMALL = 0
+                    ICON_BIG = 1
+                    hicon_big = ctypes.windll.user32.LoadImageW(0, icon_ico, IMAGE_ICON, 0, 0, LR_LOADFROMFILE)
+                    hicon_small = ctypes.windll.user32.LoadImageW(0, icon_ico, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+                    if hicon_big:
+                        ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+                        ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small or hicon_big)
+            except Exception:
+                pass
 
     def toggle_pin_topmost(self):
         self.is_topmost = not self.is_topmost
@@ -797,16 +822,18 @@ def main():
         app.setApplicationName("AIToolLauncher")
         app.setApplicationDisplayName("AI Tool Launcher 2.0")
 
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.png")
-        if os.path.exists(icon_path):
-            app.setWindowIcon(QIcon(icon_path))
+        icon_ico = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.ico")
+        icon_png = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.png")
+        icon_file = icon_ico if os.path.exists(icon_ico) else icon_png
+        if os.path.exists(icon_file):
+            app.setWindowIcon(QIcon(icon_file))
 
         setTheme(Theme.AUTO)
         setThemeColor("#9A70FF")
         
         window = AIToolLauncherV2()
-        if os.path.exists(icon_path):
-            window.setWindowIcon(QIcon(icon_path))
+        if os.path.exists(icon_file):
+            window.setWindowIcon(QIcon(icon_file))
             
         window.show()
         sys.exit(app.exec())

@@ -5,8 +5,9 @@ using System.Windows.Forms;
 using System.Diagnostics;
 using System.Linq;
 
-[assembly: System.Reflection.AssemblyTitle("AI Tool Launcher")]
-[assembly: System.Reflection.AssemblyProduct("AI Tool Launcher")]
+[assembly: System.Reflection.AssemblyTitle("AI Tool Launcher 2.0")]
+[assembly: System.Reflection.AssemblyProduct("AI Tool Launcher 2.0")]
+[assembly: System.Reflection.AssemblyDescription("AI 小工具快速啟動與收納箱")]
 
 namespace LauncherWrapper {
     class Program {
@@ -27,11 +28,11 @@ namespace LauncherWrapper {
 
         [STAThread]
         static void Main() {
-            try { SetCurrentProcessExplicitAppUserModelID("ai.tool.launcher.1.0"); } catch {}
+            try { SetCurrentProcessExplicitAppUserModelID("jiasai.aitoollauncher.v2.desktop"); } catch {}
 
-            string pyScript = Path.Combine(Application.StartupPath, "core", "launcher.py");
+            string pyScript = Path.Combine(Application.StartupPath, "core", "launcher_v2.py");
             if (!File.Exists(pyScript)) {
-                MessageBox.Show("找不到核心檔案: core\\launcher.py", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("找不到核心檔案: core\\launcher_v2.py", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
