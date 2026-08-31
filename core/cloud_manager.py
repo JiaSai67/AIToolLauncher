@@ -1,4 +1,4 @@
-import os, sys, json, subprocess, shutil, re, urllib.request, threading
+import os, sys, json, subprocess, shutil, re, urllib.request, threading, stat
 from datetime import datetime
 
 try:
@@ -7,6 +7,34 @@ except ModuleNotFoundError:
     from identity_manager import send_identity_webhook
 
 GITHUB_REPOS_API = "https://api.github.com/users/JiaSai67/repos"
+
+def force_remove_directory(path: str):
+    """
+    Windows 上強制刪除包含唯讀、隱藏與 .git 屬性的資料夾
+    """
+    if not os.path.exists(path):
+        return
+    try:
+        def on_rm_error(func, p, exc_info):
+            try:
+                os.chmod(p, stat.S_IWRITE)
+                func(p)
+            except Exception:
+                pass
+        shutil.rmtree(path, onerror=on_rm_error)
+    except Exception:
+        pass
+
+    if os.path.exists(path):
+        try:
+            flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+            subprocess.run(
+                ["cmd.exe", "/c", f'rd /s /q "{os.path.normpath(path)}"'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=flags
+            )
+        except Exception:
+            pass
 
 def parse_linkme(target_dir: str) -> dict:
     """
@@ -138,27 +166,29 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
     """
     def _task():
         repo_name = repo.get('name', '')
-        clone_url = repo.get('clone_url', '')
+        clone_url = repo.get('clone_url', '') or f"https://github.com/JiaSai67/{repo_name}.git"
         target_dir = os.path.join(cloud_tools_dir, repo_name)
         flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
 
         try:
             os.makedirs(cloud_tools_dir, exist_ok=True)
 
+            # 徹底清空舊目錄 (處理 .git 唯讀屬性)
             if os.path.exists(target_dir):
-                shutil.rmtree(target_dir, ignore_errors=True)
+                force_remove_directory(target_dir)
 
             # 1. Git Clone
             p = subprocess.Popen(
                 ["git", "clone", "--progress", clone_url, repo_name],
                 cwd=cloud_tools_dir, creationflags=flags,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding='utf-8', errors='replace'
             )
-            p.wait(timeout=120)
+            stdout_data, stderr_data = p.communicate(timeout=120)
 
             if p.returncode != 0:
-                on_finished(False, f"Git clone 失敗 (代碼: {p.returncode})", None)
+                err_msg = stderr_data.strip() or f"Git clone 失敗 (代碼: {p.returncode})"
+                on_finished(False, err_msg, None)
                 return
 
             # 2. 解析 linkme.bat 或尋找 main.py / start.bat
@@ -276,13 +306,13 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished):
 
 def uninstall_tool(tool_data: dict, cloud_tools_dir: str) -> bool:
     """
-    移除小工具：若位於 CloudTools 則刪除資料夾
+    移除小工具：若位於 CloudTools 則刪除資料夾 (含 .git 屬性清除)
     """
     wdir = tool_data.get("working_dir", "")
     try:
         if wdir and os.path.exists(wdir):
             if os.path.abspath(wdir).startswith(os.path.abspath(cloud_tools_dir)):
-                shutil.rmtree(wdir, ignore_errors=True)
+                force_remove_directory(wdir)
         return True
     except Exception:
         return False
