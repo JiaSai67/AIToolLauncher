@@ -78,6 +78,7 @@ namespace LauncherWrapper {
             string newPath = pythonDir + ";" + Path.Combine(pythonDir, "DLLs") + ";" + Path.Combine(pythonDir, "Library", "bin") + ";" + Environment.GetEnvironmentVariable("PATH");
             Environment.SetEnvironmentVariable("PATH", newPath);
             Environment.SetEnvironmentVariable("TRUE_PYTHON_DIR", pythonDir);
+            Environment.SetEnvironmentVariable("TRUE_PYTHON_EXE", sourcePython);
 
             // Find python3*.dll
             string[] dlls = Directory.GetFiles(pythonDir, "python3*.dll");

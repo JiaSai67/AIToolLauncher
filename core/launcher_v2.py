@@ -74,6 +74,63 @@ def set_native_topmost(win_id: int, is_topmost: bool):
         pass
 
 
+def get_real_python_exe(prefer_gui: bool = True) -> str:
+    """
+    精準取得真實的 Python 解譯器路徑 (徹底防止 C# 包裝器 AIToolLauncher.exe 被誤當作 python.exe)
+    """
+    # 1. 優先檢查環境變數 TRUE_PYTHON_EXE / TRUE_PYTHON_DIR
+    env_exe = os.environ.get("TRUE_PYTHON_EXE", "")
+    if env_exe and os.path.exists(env_exe) and not env_exe.lower().endswith("aitoollauncher.exe"):
+        if prefer_gui and "python.exe" in env_exe.lower():
+            cand = env_exe.lower().replace("python.exe", "pythonw.exe")
+            if os.path.exists(cand):
+                return cand
+        elif not prefer_gui and "pythonw.exe" in env_exe.lower():
+            cand = env_exe.lower().replace("pythonw.exe", "python.exe")
+            if os.path.exists(cand):
+                return cand
+        return env_exe
+
+    env_dir = os.environ.get("TRUE_PYTHON_DIR", "")
+    if env_dir and os.path.isdir(env_dir):
+        order = ["pythonw.exe", "python.exe"] if prefer_gui else ["python.exe", "pythonw.exe"]
+        for cand in order:
+            p = os.path.join(env_dir, cand)
+            if os.path.exists(p):
+                return p
+
+    # 2. 檢查 sys.executable (排除 AIToolLauncher.exe)
+    if sys.executable and not sys.executable.lower().endswith("aitoollauncher.exe"):
+        exe = sys.executable
+        if prefer_gui and "python.exe" in exe.lower():
+            cand = exe.lower().replace("python.exe", "pythonw.exe")
+            if os.path.exists(cand):
+                return cand
+        elif not prefer_gui and "pythonw.exe" in exe.lower():
+            cand = exe.lower().replace("pythonw.exe", "python.exe")
+            if os.path.exists(cand):
+                return cand
+        return exe
+
+    # 3. 檢查本地 runtime/python
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    portable_order = ["pythonw.exe", "python.exe"] if prefer_gui else ["python.exe", "pythonw.exe"]
+    for cand in portable_order:
+        portable = os.path.join(base_dir, "runtime", "python", cand)
+        if os.path.exists(portable):
+            return portable
+
+    # 4. 尋找系統 PATH 中的 python
+    import shutil
+    order = ["pythonw", "python"] if prefer_gui else ["python", "pythonw"]
+    for cand in order:
+        p = shutil.which(cand)
+        if p and not p.lower().endswith("aitoollauncher.exe"):
+            return p
+
+    return "pythonw" if prefer_gui else "python"
+
+
 def bring_window_to_foreground(pid: int = None, title_hint: str = None) -> bool:
     """
     將指定 PID 或標題的 Windows 視窗呼叫並置於最上層
@@ -615,12 +672,7 @@ class AIToolLauncherV2(MSFluentWindow):
                 proc = None
 
                 if exe.endswith(".py"):
-                    python_exe = sys.executable
-                    if "python.exe" in python_exe.lower():
-                        cand = python_exe.lower().replace("python.exe", "pythonw.exe")
-                        if os.path.exists(cand):
-                            python_exe = cand
-
+                    python_exe = get_real_python_exe(prefer_gui=True)
                     proc = subprocess.Popen(
                         [python_exe, exe],
                         cwd=wdir,
@@ -728,7 +780,8 @@ class AIToolLauncherV2(MSFluentWindow):
         def _on_finished(success, msg, tool_entry):
             self.installFinished.emit(success, msg, tool_entry or {}, repo_name)
 
-        install_cloud_repo_async(repo_data, self.cloud_tools_dir, sys.executable, _on_finished, _on_progress)
+        py_cli = get_real_python_exe(prefer_gui=False)
+        install_cloud_repo_async(repo_data, self.cloud_tools_dir, py_cli, _on_finished, _on_progress)
 
     def on_install_progress_slot(self, repo_name: str, pct: int, status_text: str):
         for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.all_flow_layout]:
@@ -776,7 +829,8 @@ class AIToolLauncherV2(MSFluentWindow):
         def _on_finished(success, msg, updated_tool):
             self.reinstallFinished.emit(success, msg, updated_tool or {})
 
-        reinstall_tool_async(tool_data, sys.executable, _on_finished)
+        py_cli = get_real_python_exe(prefer_gui=False)
+        reinstall_tool_async(tool_data, py_cli, _on_finished)
 
     def on_reinstall_finished_slot(self, success: bool, msg: str, updated_tool: dict):
         if success:
