@@ -46,7 +46,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.6"
+VERSION = "2.0.7"
 
 
 def set_native_topmost(win_id: int, is_topmost: bool):
@@ -470,19 +470,56 @@ class AIToolLauncherV2(MSFluentWindow):
                         if os.path.exists(cand):
                             python_exe = cand
 
-                    # 注入獨立 AppUserModelID，使 Windows 工作列顯示小工具自己的獨立圖標，而非 Python 預設圖示
                     safe_app_id = re.sub(r'[^a-zA-Z0-9_]', '_', name)
-                    boot_script = (
-                        f"import ctypes, sys, os; "
-                        f"ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(r'AITool.{safe_app_id}'); "
-                        f"sys.path.insert(0, r'{wdir}'); "
-                        f"os.chdir(r'{wdir}'); "
-                        f"__file__ = r'{exe}'; "
-                        f"exec(compile(open(r'{exe}', 'rb').read(), r'{exe}', 'exec'))"
-                    )
 
+                    # 搜尋工具的最佳圖示
+                    icon_file = ""
+                    for cand in [
+                        "assets/icon.png", "assets/icon.ico", "resources/icon.png", 
+                        "resources/icon.ico", "icon.png", "icon/mic.png", "app.ico"
+                    ]:
+                        cand_path = os.path.join(wdir, cand)
+                        if os.path.exists(cand_path):
+                            icon_file = cand_path
+                            break
+
+                    # 注入獨立 AppUserModelID 與全自動 Qt setWindowIcon 攔截器
+                    boot_code = f"""import ctypes, sys, os
+try:
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(r'AITool.{safe_app_id}')
+except Exception:
+    pass
+
+sys.path.insert(0, r'{wdir}')
+os.chdir(r'{wdir}')
+
+icon_path = r'{icon_file}'
+if icon_path and os.path.exists(icon_path):
+    for qt in ['PySide6', 'PyQt6', 'PySide2', 'PyQt5']:
+        try:
+            import importlib
+            mod = importlib.import_module(f'{{qt}}.QtWidgets')
+            gui = importlib.import_module(f'{{qt}}.QtGui')
+            orig_init = mod.QApplication.__init__
+            def make_patched_init(old_init, ic_path, gui_module):
+                def _init(self, *args, **kwargs):
+                    old_init(self, *args, **kwargs)
+                    try:
+                        self.setWindowIcon(gui_module.QIcon(ic_path))
+                    except Exception:
+                        pass
+                return _init
+            mod.QApplication.__init__ = make_patched_init(orig_init, icon_path, gui)
+        except Exception:
+            pass
+
+sys.argv = [r'{exe}']
+globs = {{'__name__': '__main__', '__file__': r'{exe}'}}
+with open(r'{exe}', 'rb') as f:
+    exec(compile(f.read(), r'{exe}', 'exec'), globs)
+"""
                     subprocess.Popen(
-                        [python_exe, "-c", boot_script],
+                        [python_exe, "-c", boot_code],
                         cwd=wdir,
                         creationflags=detached_flags,
                         close_fds=True,
