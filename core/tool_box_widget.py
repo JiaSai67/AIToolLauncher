@@ -438,30 +438,30 @@ class ToolCardWidget(CardWidget):
     def play_install_success_celebration(self, on_finished=None):
         """
         完成安裝慶祝動畫：
-        1. 金色由上至下鋪滿 (Gold Sweep)
-        2. 綠色圓圈帶打勾動態繪製 (Animated Green Checkmark)
-        3. 停頓欣賞 350ms
-        4. 從下至上平滑覆蓋替換為原本應該出現的圖標 (Bottom-to-Top Wipe Reveal)
-        5. 平滑轉正為已安裝卡片
+        1. 金色由上至下鋪滿 (Gold Sweep 300ms)
+        2. 綠色圓圈帶打勾動態繪製 (Animated Green Checkmark 350ms)
+        3. 停頓欣賞 300ms
+        4. 【由下至上平滑覆蓋替換為原生大圖標 (圖三)】(Bottom-to-Top Wipe Reveal 420ms)
+        5. 完成後靜默隱藏標籤並就地轉正為正式已安裝卡片 (無任何重繪閃現)
         """
         try:
             self.celeb_group = QSequentialAnimationGroup(self)
 
-            # 1. 金色鋪滿動畫 (320ms)
+            # 1. 金色鋪滿動畫 (300ms)
             anim_sweep = QPropertyAnimation(self, b"goldSweep")
-            anim_sweep.setDuration(320)
+            anim_sweep.setDuration(300)
             anim_sweep.setStartValue(0.0)
             anim_sweep.setEndValue(1.0)
             anim_sweep.setEasingCurve(QEasingCurve.OutQuad)
 
-            # 2. 綠色圓圈帶打勾繪製動畫 (400ms)
+            # 2. 綠色圓圈帶打勾繪製動畫 (350ms)
             anim_check = QPropertyAnimation(self, b"checkmarkProgress")
-            anim_check.setDuration(400)
+            anim_check.setDuration(350)
             anim_check.setStartValue(0.0)
             anim_check.setEndValue(1.0)
             anim_check.setEasingCurve(QEasingCurve.OutCubic)
 
-            # 3. 【從下至上平滑覆蓋替換為原生圖標】(420ms)
+            # 3. 【從下至上平滑覆蓋替換為圖三的原生大圖標】(420ms)
             anim_reveal = QPropertyAnimation(self, b"revealProgress")
             anim_reveal.setDuration(420)
             anim_reveal.setStartValue(0.0)
@@ -470,25 +470,25 @@ class ToolCardWidget(CardWidget):
 
             self.celeb_group.addAnimation(anim_sweep)
             self.celeb_group.addAnimation(anim_check)
-            self.celeb_group.addPause(350)
+            self.celeb_group.addPause(300)
             self.celeb_group.addAnimation(anim_reveal)
 
             def _after_celeb():
-                def _restore():
+                try:
+                    self._gold_sweep = 0.0
+                    self._flash_intensity = 0.0
+                    self._checkmark_progress = 0.0
+                    self._reveal_progress = 0.0
+                    self.current_state = self.STATE_IDLE
+                    self.badge_label.hide()
+                    self.apply_state(self.STATE_IDLE)
+                except Exception:
+                    pass
+                if on_finished:
                     try:
-                        self.set_gold_sweep(0.0)
-                        self.set_flash_intensity(0.0)
-                        self.set_checkmark_progress(0.0)
-                        self.set_reveal_progress(0.0)
-                        self.apply_state(self.STATE_IDLE)
+                        on_finished()
                     except Exception:
                         pass
-                    if on_finished:
-                        try:
-                            on_finished()
-                        except Exception:
-                            pass
-                QTimer.singleShot(100, _restore)
 
             self.celeb_group.finished.connect(_after_celeb)
             self.celeb_group.start()

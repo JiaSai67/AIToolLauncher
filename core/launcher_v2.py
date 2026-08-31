@@ -687,16 +687,6 @@ class AIToolLauncherV2(MSFluentWindow):
         installing_card.popup_expand_animation()
         self.installing_cards[repo_name] = installing_card
 
-        InfoBar.info(
-            title="📥 正在下載安裝",
-            content=f"開始從 GitHub 下載 【{repo_name}】...",
-            orient=Qt.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=3500,
-            parent=self
-        )
-
         def _on_progress(pct, msg):
             self.installProgressSignal.emit(repo_name, pct, msg)
 
@@ -718,12 +708,13 @@ class AIToolLauncherV2(MSFluentWindow):
             self.registry.setdefault("tools", []).append(tool_entry)
             self.save_registry()
 
-            # 3. 完成安裝時：金色鋪滿 ➔ 綠色打勾 ➔ 從下至上平滑覆蓋替換為原生大圖標 (完全無彈窗干擾、無閃現)
+            # 3. 完成安裝時：金色鋪滿 ➔ 綠色打勾 ➔ 從下至上平滑覆蓋替換為原生大圖標 (圖三) (100% 就地替換，不重建佈局、無任何彈窗閃現)
             if card:
                 card.data = tool_entry
                 card.is_installed = True
+                card.title_label.setText(tool_entry.get("name", card.title_label.text()))
                 card.set_install_progress(100, "✅ 安裝完成")
-                card.play_install_success_celebration(on_finished=lambda: self.box_lobby.refresh_all(show_prompt=False))
+                card.play_install_success_celebration(on_finished=lambda c=card: self._on_install_celebration_complete(c))
             else:
                 self.box_lobby.refresh_all(show_prompt=False)
         else:
@@ -738,6 +729,19 @@ class AIToolLauncherV2(MSFluentWindow):
                 duration=5000,
                 parent=self
             )
+
+    def _on_install_celebration_complete(self, card: ToolCardWidget):
+        """安裝慶祝完成後就地轉正為正式已安裝卡片，完全不重刷介面與佈局"""
+        try:
+            card.badge_label.hide()
+            card.toolClicked.disconnect()
+        except Exception:
+            pass
+        card.toolClicked.connect(lambda d, inst, c=card: self.launch_tool(d, card=c))
+        card.reinstallRequested.connect(self.reinstall_tool)
+        card.uninstallRequested.connect(self.uninstall_tool)
+        self.box_lobby.installed_header.setText(f"🟢 已安裝 ({self.box_lobby.installed_flow_layout.count()})")
+        self.box_lobby.uninstalled_header.setText(f"☁️ 雲端庫 / 未安裝 ({self.box_lobby.uninstalled_flow_layout.count()})")
 
     def reinstall_tool(self, tool_data: dict):
         name = tool_data.get("name", "小工具")
