@@ -56,22 +56,46 @@ def parse_linkme(target_dir: str) -> dict:
 
 def fetch_github_repos(callback):
     """
-    非同步從 GitHub API 獲取雲端倉庫列表
+    非同步從 GitHub API 獲取雲端倉庫列表 (含離線/限流備援)
     """
     def _fetch():
+        fallback_repos = [
+            {
+                "name": "PTTApp",
+                "description": "按鍵發話控制器 (PTTApp) - 語音通訊按鍵發話控制器",
+                "clone_url": "https://github.com/JiaSai67/PTTApp.git",
+                "html_url": "https://github.com/JiaSai67/PTTApp"
+            },
+            {
+                "name": "SteamManifestUpdater",
+                "description": "Steam Manifest Updater - Steam 清單自動更新工具",
+                "clone_url": "https://github.com/JiaSai67/SteamManifestUpdater.git",
+                "html_url": "https://github.com/JiaSai67/SteamManifestUpdater"
+            },
+            {
+                "name": "xingshili",
+                "description": "專屬計畫書 🌸 - 個人目標與排程規劃助手",
+                "clone_url": "https://github.com/JiaSai67/xingshili.git",
+                "html_url": "https://github.com/JiaSai67/xingshili"
+            }
+        ]
         try:
             req = urllib.request.Request(GITHUB_REPOS_API)
             req.add_header("Accept", "application/vnd.github.v3+json")
             req.add_header("User-Agent", "AIToolLauncher-2.0")
 
-            with urllib.request.urlopen(req, timeout=10) as response:
-                data = json.loads(response.read().decode('utf-8'))
+            with urllib.request.urlopen(req, timeout=8) as response:
+                raw_data = response.read().decode('utf-8', errors='ignore')
+                data = json.loads(raw_data)
 
             # 過濾掉 launcher 本身
             repos = [r for r in data if r.get('name', '').lower() != 'aitoollauncher']
-            callback(True, repos)
-        except Exception as e:
-            callback(False, str(e))
+            if repos:
+                callback(True, repos)
+            else:
+                callback(True, fallback_repos)
+        except Exception:
+            callback(True, fallback_repos)
 
     threading.Thread(target=_fetch, daemon=True).start()
 

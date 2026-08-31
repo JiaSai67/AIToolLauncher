@@ -74,7 +74,9 @@ def clear_layout(layout):
         return
     while layout.count():
         item = layout.takeAt(0)
-        w = item.widget()
+        if item is None:
+            break
+        w = item if isinstance(item, QWidget) else getattr(item, 'widget', lambda: None)()
         if w:
             w.setParent(None)
             w.deleteLater()
@@ -85,11 +87,14 @@ class BoxLobbyInterface(QWidget):
     收納盒大廳主頁面 (同頁雙區塊：上方「已安裝」、下方「未安裝」)
     採用自適應 FlowLayout 流式卡片網格，保證元件永不收縮摺疊
     """
+    cloudReposFetched = Signal(list)
+
     def __init__(self, parent_window, parent=None):
         super().__init__(parent)
         self.parent_window = parent_window
         self.setObjectName("boxLobbyInterface")
         self.cloud_repos = []
+        self.cloudReposFetched.connect(self.on_cloud_repos_fetched)
         self.init_ui()
 
     def init_ui(self):
@@ -189,11 +194,16 @@ class BoxLobbyInterface(QWidget):
 
     def fetch_cloud_repos_async(self):
         def _callback(success, data):
-            if success:
-                self.cloud_repos = data
-                self.load_and_render_tools(filter_text=self.search_input.text().strip())
+            if success and isinstance(data, list):
+                self.cloudReposFetched.emit(data)
+            else:
+                self.cloudReposFetched.emit([])
 
         fetch_github_repos(_callback)
+
+    def on_cloud_repos_fetched(self, repos: list):
+        self.cloud_repos = repos
+        self.load_and_render_tools(filter_text=self.search_input.text().strip())
 
     def load_and_render_tools(self, filter_text: str = ""):
         # 1. 清除舊有元件
