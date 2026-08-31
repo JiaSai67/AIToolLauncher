@@ -1,6 +1,0 @@
-Traceback (most recent call last):
-  File "<string>", line 31, in <module>
-  File "G:\python\toolLauncher\core\tool_box_widget.py", line 372, in shrink_collapse_animation
-    self.anim_shrink_group = QParallelAnimationGroup(self)
-                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-RuntimeError: libshiboken: Internal C++ object (ToolCardWidget) already deleted.
