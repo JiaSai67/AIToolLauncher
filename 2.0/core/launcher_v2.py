@@ -22,11 +22,14 @@ from qfluentwidgets import (
 try:
     from core.settings_panel import SettingsPanel
     from core.tool_box_widget import ToolCardWidget
-    from core.identity_manager import get_client_identity, send_identity_webhook, get_webhook_url
+    from core.identity_manager import get_client_identity, send_identity_webhook, get_webhook_url, install_global_exception_hook
 except ModuleNotFoundError:
     from settings_panel import SettingsPanel
     from tool_box_widget import ToolCardWidget
-    from identity_manager import get_client_identity, send_identity_webhook, get_webhook_url
+    from identity_manager import get_client_identity, send_identity_webhook, get_webhook_url, install_global_exception_hook
+
+# 立即安裝全域崩潰與異常攔截器 (含加密 Webhook 推播)
+install_global_exception_hook()
 
 VERSION = "2.0.2"
 
