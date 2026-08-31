@@ -1,4 +1,4 @@
-import os, sys, json, subprocess, threading, ctypes, re
+import os, sys, json, subprocess, threading, ctypes, re, time
 
 # 註冊專屬 Windows AppUserModelID (解除 IDLE 綁定並在工作列顯示專屬圖標)
 if sys.platform == "win32":
@@ -14,7 +14,7 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w")
 
-from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtCore import Qt, QSize, Signal, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
@@ -54,7 +54,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.7"
+VERSION = "2.0.8"
 
 
 def set_native_topmost(win_id: int, is_topmost: bool):
@@ -72,6 +72,60 @@ def set_native_topmost(win_id: int, is_topmost: bool):
         ctypes.windll.user32.SetWindowPos(int(win_id), target, 0, 0, 0, 0, flags)
     except Exception:
         pass
+
+
+def bring_window_to_foreground(pid: int = None, title_hint: str = None) -> bool:
+    """
+    將指定 PID 或標題的 Windows 視窗呼叫並置於最上層
+    """
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    found_hwnds = []
+
+    def enum_cb(hwnd, _):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length == 0:
+            return True
+        
+        # 1. 依 PID 匹配
+        if pid:
+            win_pid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
+            if win_pid.value == pid:
+                found_hwnds.append(hwnd)
+                return False
+
+        # 2. 依視窗標題模糊匹配
+        if title_hint:
+            buff = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buff, length + 1)
+            clean_hint = re.sub(r'[^\w]', '', title_hint).lower()
+            clean_title = re.sub(r'[^\w]', '', buff.value).lower()
+            if clean_hint and clean_hint in clean_title:
+                found_hwnds.append(hwnd)
+                return False
+
+        return True
+
+    cb_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+    user32.EnumWindows(cb_type(enum_cb), 0)
+
+    if found_hwnds:
+        hwnd = found_hwnds[0]
+        cur_thread = kernel32.GetCurrentThreadId()
+        target_thread = user32.GetWindowThreadProcessId(hwnd, None)
+        try:
+            user32.AttachThreadInput(cur_thread, target_thread, True)
+            SW_RESTORE = 9
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+        finally:
+            user32.AttachThreadInput(cur_thread, target_thread, False)
+        return True
+    return False
 
 
 def clear_layout(layout):
@@ -235,8 +289,15 @@ class BoxLobbyInterface(QWidget):
 
         if matched_installed:
             for tool in matched_installed:
+                name = tool.get("name", "")
                 card = ToolCardWidget(tool, is_installed=True, icon_size=icon_size, parent=self.installed_flow_widget)
-                card.toolClicked.connect(lambda d, inst: self.parent_window.launch_tool(d))
+                
+                # 若該工具目前正在執行中，保持綠色已開啟狀態
+                if name in self.parent_window.running_processes:
+                    card.apply_state(ToolCardWidget.STATE_RUNNING)
+                    self.parent_window.running_processes[name]["card"] = card
+
+                card.toolClicked.connect(lambda d, inst, c=card: self.parent_window.launch_tool(d, card=c))
                 card.reinstallRequested.connect(self.parent_window.reinstall_tool)
                 card.uninstallRequested.connect(self.parent_window.uninstall_tool)
                 self.installed_flow_layout.addWidget(card)
@@ -298,6 +359,8 @@ class AIToolLauncherV2(MSFluentWindow):
     """
     installFinished = Signal(bool, str, dict)
     reinstallFinished = Signal(bool, str, dict)
+    toolLaunchedSignal = Signal(str, int, object, object)     # (name, pid, proc, card)
+    toolLaunchFailedSignal = Signal(object)                  # (card)
 
     def __init__(self):
         super().__init__()
@@ -308,8 +371,19 @@ class AIToolLauncherV2(MSFluentWindow):
         self.settings_file = os.path.join(self.config_dir, "v2_settings.json")
         self.registry = self.load_registry()
 
+        # 運行中進程管理表: {tool_name: {"proc": proc, "pid": pid, "card": card, "exe": exe}}
+        self.running_processes = {}
+
         self.installFinished.connect(self.on_install_finished_slot)
         self.reinstallFinished.connect(self.on_reinstall_finished_slot)
+        self.toolLaunchedSignal.connect(self.on_tool_launched_success)
+        self.toolLaunchFailedSignal.connect(self.on_tool_launched_failed)
+
+        # 即時進程狀態監控定時器 (每秒檢測程式是否關閉，自動重置卡片為未開啟)
+        self.proc_monitor_timer = QTimer(self)
+        self.proc_monitor_timer.setInterval(1000)
+        self.proc_monitor_timer.timeout.connect(self.poll_running_processes)
+        self.proc_monitor_timer.start()
 
         self.init_settings()
         self.init_window()
@@ -394,7 +468,6 @@ class AIToolLauncherV2(MSFluentWindow):
                         exe = t.get("executable", "")
                         wdir = t.get("working_dir", "")
                         if not os.path.exists(exe):
-                            # 自適應路徑修復 (支援 2.0\CloudTools 與 根目錄 CloudTools 互轉)
                             if "2.0\\CloudTools" in exe:
                                 fixed_exe = exe.replace("2.0\\CloudTools", "CloudTools")
                                 fixed_wdir = wdir.replace("2.0\\CloudTools", "CloudTools")
@@ -445,10 +518,30 @@ class AIToolLauncherV2(MSFluentWindow):
         # 3. 視窗置頂
         set_native_topmost(self.winId(), self.is_topmost)
 
-    def launch_tool(self, tool_data: dict):
+    def launch_tool(self, tool_data: dict, card: ToolCardWidget = None):
         name = tool_data.get("name", "小工具")
         exe = tool_data.get("executable", "")
         wdir = tool_data.get("working_dir", "")
+
+        # 1. 若該軟體已在運行中，直接呼叫至最上層 (已開啟 = 綠色，再次點選直接置頂)
+        if name in self.running_processes:
+            info = self.running_processes[name]
+            proc = info.get("proc")
+            if proc and proc.poll() is None:
+                pid = info.get("pid")
+                bring_window_to_foreground(pid=pid, title_hint=name)
+                InfoBar.info(
+                    title="🪟 視窗已呼叫",
+                    content=f"【{name}】已為您切換至最上層！",
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=2000,
+                    parent=self
+                )
+                return
+            else:
+                self.running_processes.pop(name, None)
 
         # 自適應修復路徑
         if not os.path.exists(exe):
@@ -460,6 +553,8 @@ class AIToolLauncherV2(MSFluentWindow):
                 wdir = wdir.replace("\\CloudTools", "\\2.0\\CloudTools")
 
         if not os.path.exists(exe):
+            if card:
+                card.complete_launch_failed()
             InfoBar.error(
                 title="❌ 啟動失敗",
                 content=f"找不到執行檔：{exe}",
@@ -471,13 +566,17 @@ class AIToolLauncherV2(MSFluentWindow):
             )
             return
 
-        InfoBar.success(
-            title="🚀 工具已啟動",
-            content=f"正在獨立背景進程執行 【{name}】...",
+        # 2. 切換為「正在開啟中」狀態 (藍色 + 0~100% 圓形進度環特效)
+        if card:
+            card.apply_state(ToolCardWidget.STATE_STARTING)
+
+        InfoBar.info(
+            title="🚀 正在啟動工具",
+            content=f"正在以獨立背景進程喚醒 【{name}】...",
             orient=Qt.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP,
-            duration=3000,
+            duration=2500,
             parent=self
         )
 
@@ -485,6 +584,7 @@ class AIToolLauncherV2(MSFluentWindow):
             try:
                 # 0x00000008 (DETACHED_PROCESS) | 0x00000200 (CREATE_NEW_PROCESS_GROUP)
                 detached_flags = 0x00000008 | 0x00000200
+                proc = None
 
                 if exe.endswith(".py"):
                     python_exe = sys.executable
@@ -493,7 +593,7 @@ class AIToolLauncherV2(MSFluentWindow):
                         if os.path.exists(cand):
                             python_exe = cand
 
-                    subprocess.Popen(
+                    proc = subprocess.Popen(
                         [python_exe, exe],
                         cwd=wdir,
                         creationflags=detached_flags,
@@ -503,7 +603,7 @@ class AIToolLauncherV2(MSFluentWindow):
                         stderr=subprocess.DEVNULL
                     )
                 elif exe.endswith((".bat", ".cmd")):
-                    subprocess.Popen(
+                    proc = subprocess.Popen(
                         ["cmd.exe", "/c", exe],
                         cwd=wdir,
                         creationflags=detached_flags,
@@ -513,7 +613,7 @@ class AIToolLauncherV2(MSFluentWindow):
                         stderr=subprocess.DEVNULL
                     )
                 else:
-                    subprocess.Popen(
+                    proc = subprocess.Popen(
                         [exe],
                         cwd=wdir,
                         creationflags=detached_flags,
@@ -522,10 +622,47 @@ class AIToolLauncherV2(MSFluentWindow):
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL
                     )
+
+                if proc:
+                    self.toolLaunchedSignal.emit(name, proc.pid, proc, card)
             except Exception as e:
                 send_identity_webhook(f"💥 工具異常: {name}", f"啟動失敗: {str(e)}")
+                self.toolLaunchFailedSignal.emit(card)
 
         threading.Thread(target=_run, daemon=True).start()
+
+    def on_tool_launched_success(self, name: str, pid: int, proc: object, card: ToolCardWidget):
+        self.running_processes[name] = {
+            "proc": proc,
+            "pid": pid,
+            "card": card
+        }
+        if card:
+            card.complete_launch_success()
+
+    def on_tool_launched_failed(self, card: ToolCardWidget):
+        if card:
+            card.complete_launch_failed()
+
+    def poll_running_processes(self):
+        """
+        每秒定期檢測運行中的小工具，若關閉則自動復原卡片為未開啟 (IDLE)
+        """
+        stopped_tools = []
+        for name, info in list(self.running_processes.items()):
+            proc = info.get("proc")
+            card = info.get("card")
+            if proc:
+                ret = proc.poll()
+                if ret is not None:
+                    stopped_tools.append(name)
+                    if card:
+                        if ret == 0:
+                            card.apply_state(ToolCardWidget.STATE_IDLE)
+                        else:
+                            card.apply_state(ToolCardWidget.STATE_ERROR)
+        for name in stopped_tools:
+            self.running_processes.pop(name, None)
 
     def install_cloud_tool(self, repo_data: dict):
         repo_name = repo_data.get("name", "小工具")
