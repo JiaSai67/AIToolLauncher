@@ -1,4 +1,4 @@
-import os, sys, subprocess
+import os, sys, subprocess, webbrowser
 from PySide6.QtCore import Qt, Signal, QRectF, QSize
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor
 from PySide6.QtWidgets import (
@@ -6,17 +6,17 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     CardWidget, SimpleCardWidget, StrongBodyLabel, CaptionLabel,
-    FluentIcon, RoundMenu, Action, ToolTipFilter, ToolTipPosition
+    FluentIcon, RoundMenu, Action, ToolTipFilter, ToolTipPosition,
+    IconWidget
 )
 
 def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.22) -> QPixmap:
     """
-    將任意圖示裁切並繪製為圓角平滑圖示（iOS / macOS 現代風格）
+    將任意圖示裁切並繪製為平滑圓角圖示
     """
     if src_pixmap.isNull():
         return src_pixmap
 
-    # 確保等比例縮放
     scaled = src_pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
     radius = max(6, int(size * radius_ratio))
 
@@ -31,7 +31,6 @@ def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.2
     path.addRoundedRect(QRectF(0, 0, size, size), radius, radius)
     painter.setClipPath(path)
 
-    # 居中繪製
     x = (size - scaled.width()) // 2
     y = (size - scaled.height()) // 2
     painter.drawPixmap(x, y, scaled)
@@ -42,46 +41,62 @@ def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.2
 
 class ToolCardWidget(CardWidget):
     """
-    單一小工具磁貼卡片 (無銳角、圓角圖示、懸浮微動效)
+    小工具磁貼卡片 (支援「已安裝」與「未安裝/雲端」模式，右鍵全功能選單)
     """
-    toolClicked = Signal(dict)
+    toolClicked = Signal(dict, bool)         # (tool_data, is_installed)
+    installRequested = Signal(dict)          # (repo_data)
+    reinstallRequested = Signal(dict)        # (tool_data)
+    uninstallRequested = Signal(dict)        # (tool_data)
 
-    def __init__(self, tool_data: dict, icon_size: int = 56, parent=None):
+    def __init__(self, data: dict, is_installed: bool = True, icon_size: int = 56, parent=None):
         super().__init__(parent)
-        self.tool_data = tool_data
+        self.data = data
+        self.is_installed = is_installed
         self.icon_size = icon_size
         self.setCursor(Qt.PointingHandCursor)
         self.init_ui()
 
     def init_ui(self):
-        # 依據圖示大小動態設置卡片寬高
-        card_w = max(110, self.icon_size + 44)
-        card_h = max(118, self.icon_size + 58)
+        card_w = max(112, self.icon_size + 46)
+        card_h = max(124, self.icon_size + 62)
         self.setFixedSize(card_w, card_h)
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(8, 10, 8, 8)
-        self.layout.setSpacing(6)
+        self.layout.setSpacing(5)
         self.layout.setAlignment(Qt.AlignCenter)
 
-        # 1. 圓角 App Icon
+        # 1. 圓角圖示
         self.icon_label = QLabel(self)
         self.icon_label.setAlignment(Qt.AlignCenter)
         self.icon_label.setStyleSheet("background: transparent; border: none;")
         self.update_icon()
         self.layout.addWidget(self.icon_label)
 
-        # 2. Tool Title
-        self.title_label = StrongBodyLabel(self.tool_data.get("name", "未命名工具"), self)
+        # 2. 名稱
+        name = self.data.get("name", "未命名工具")
+        self.title_label = StrongBodyLabel(name, self)
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setWordWrap(True)
         self.title_label.setStyleSheet("font-size: 12px; line-height: 1.2;")
         self.layout.addWidget(self.title_label)
 
-        # 3. ToolTip
-        desc = self.tool_data.get("description", "無附加說明")
-        exe_path = self.tool_data.get("executable", "")
-        self.setToolTip(f"【{self.tool_data.get('name')}】\n{desc}\n路徑: {exe_path}")
+        # 3. 狀態標籤 (未安裝時提示)
+        if not self.is_installed:
+            self.badge_label = CaptionLabel("☁️ 點擊安裝", self)
+            self.badge_label.setAlignment(Qt.AlignCenter)
+            self.badge_label.setStyleSheet("color: #9A70FF; font-size: 10px; font-weight: bold;")
+            self.layout.addWidget(self.badge_label)
+
+        # 4. ToolTip
+        desc = self.data.get("description") or "GitHub 雲端工具"
+        if self.is_installed:
+            exe_path = self.data.get("executable", "")
+            self.setToolTip(f"【{name}】 (已安裝)\n{desc}\n路徑: {exe_path}")
+        else:
+            url = self.data.get("html_url") or self.data.get("clone_url", "")
+            self.setToolTip(f"【{name}】 (未安裝 - 雲端專案)\n{desc}\n倉庫: {url}")
+
         self.installEventFilter(ToolTipFilter(self, showDelay=250, position=ToolTipPosition.BOTTOM))
 
     def update_icon(self):
@@ -90,53 +105,81 @@ class ToolCardWidget(CardWidget):
         self.icon_label.setPixmap(rounded_pixmap)
 
     def get_tool_raw_pixmap(self) -> QPixmap:
-        working_dir = self.tool_data.get("working_dir", "")
-        candidate_paths = [
-            os.path.join(working_dir, "resources", "icon.png"),
-            os.path.join(working_dir, "assets", "icon.png"),
-            os.path.join(working_dir, "icon.png"),
-            os.path.join(working_dir, "app.ico"),
-            os.path.join(os.path.dirname(__file__), "..", "resources", "icon.png")
-        ]
-        for p in candidate_paths:
-            if os.path.exists(p):
-                return QPixmap(p)
+        if self.is_installed:
+            working_dir = self.data.get("working_dir", "")
+            candidate_paths = [
+                os.path.join(working_dir, "resources", "icon.png"),
+                os.path.join(working_dir, "assets", "icon.png"),
+                os.path.join(working_dir, "icon.png"),
+                os.path.join(working_dir, "app.ico"),
+                os.path.join(os.path.dirname(__file__), "..", "resources", "icon.png")
+            ]
+            for p in candidate_paths:
+                if os.path.exists(p):
+                    return QPixmap(p)
         return QPixmap(os.path.join(os.path.dirname(__file__), "..", "resources", "icon.png"))
 
     def set_icon_size(self, size: int):
         self.icon_size = size
-        card_w = max(110, self.icon_size + 44)
-        card_h = max(118, self.icon_size + 58)
+        card_w = max(112, self.icon_size + 46)
+        card_h = max(124, self.icon_size + 62)
         self.setFixedSize(card_w, card_h)
         self.update_icon()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.toolClicked.emit(self.tool_data)
+            self.toolClicked.emit(self.data, self.is_installed)
         elif event.button() == Qt.RightButton:
             self.show_context_menu(event.globalPosition().toPoint())
         super().mousePressEvent(event)
 
     def show_context_menu(self, pos):
         menu = RoundMenu(parent=self)
-        
-        act_launch = Action(FluentIcon.PLAY, "啟動此工具 (Launch)", triggered=lambda: self.toolClicked.emit(self.tool_data))
-        act_open_dir = Action(FluentIcon.FOLDER, "開啟所在資料夾 (Open Folder)", triggered=self.open_tool_folder)
-        act_copy_path = Action(FluentIcon.COPY, "複製可執行檔路徑 (Copy Path)", triggered=self.copy_executable_path)
 
-        menu.addAction(act_launch)
-        menu.addSeparator()
-        menu.addAction(act_open_dir)
-        menu.addAction(act_copy_path)
+        if self.is_installed:
+            # === 已安裝小工具選單 ===
+            act_launch = Action(FluentIcon.PLAY, "啟動工具 (Launch)", triggered=lambda: self.toolClicked.emit(self.data, True))
+            act_reinstall = Action(FluentIcon.SYNC, "重新拉取與安裝 (Reinstall / Git Pull)", triggered=lambda: self.reinstallRequested.emit(self.data))
+            act_open_dir = Action(FluentIcon.FOLDER, "開啟所在資料夾 (Open Folder)", triggered=self.open_tool_folder)
+            act_copy_path = Action(FluentIcon.COPY, "複製執行檔路徑 (Copy Path)", triggered=self.copy_executable_path)
+            act_uninstall = Action(FluentIcon.DELETE, "移除小工具 (Uninstall)", triggered=lambda: self.uninstallRequested.emit(self.data))
+
+            menu.addAction(act_launch)
+            menu.addAction(act_reinstall)
+            menu.addSeparator()
+            menu.addAction(act_open_dir)
+            menu.addAction(act_copy_path)
+            menu.addSeparator()
+            menu.addAction(act_uninstall)
+        else:
+            # === 未安裝雲端小工具選單 ===
+            act_install = Action(FluentIcon.DOWNLOAD, "下載並安裝此工具 (Install)", triggered=lambda: self.installRequested.emit(self.data))
+            act_github = Action(FluentIcon.GLOBE, "在 GitHub 上查看 (View on GitHub)", triggered=self.open_github_page)
+            act_copy_url = Action(FluentIcon.COPY, "複製倉庫網址 (Copy Git URL)", triggered=self.copy_git_url)
+
+            menu.addAction(act_install)
+            menu.addSeparator()
+            menu.addAction(act_github)
+            menu.addAction(act_copy_url)
 
         menu.exec(pos)
 
     def open_tool_folder(self):
-        working_dir = self.tool_data.get("working_dir", "")
+        working_dir = self.data.get("working_dir", "")
         if os.path.exists(working_dir):
             os.startfile(working_dir)
 
     def copy_executable_path(self):
         from PySide6.QtWidgets import QApplication
-        exe_path = self.tool_data.get("executable", "")
+        exe_path = self.data.get("executable", "")
         QApplication.clipboard().setText(exe_path)
+
+    def open_github_page(self):
+        url = self.data.get("html_url") or f"https://github.com/{self.data.get('full_name', '')}"
+        if url:
+            webbrowser.open(url)
+
+    def copy_git_url(self):
+        from PySide6.QtWidgets import QApplication
+        url = self.data.get("clone_url") or self.data.get("html_url", "")
+        QApplication.clipboard().setText(url)

@@ -15,28 +15,43 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     MSFluentWindow, NavigationItemPosition, FluentIcon, SearchLineEdit,
     SubtitleLabel, CaptionLabel, InfoBar, InfoBarPosition, setTheme,
-    Theme, setThemeColor, CardWidget, BodyLabel, TransparentToolButton
+    Theme, setThemeColor, CardWidget, BodyLabel, TransparentToolButton,
+    SegmentedWidget, MessageBox
 )
 
 # Relative imports
 try:
     from core.settings_panel import SettingsPanel
     from core.tool_box_widget import ToolCardWidget
-    from core.identity_manager import get_client_identity, send_identity_webhook, get_webhook_url, install_global_exception_hook
+    from core.cloud_manager import (
+        fetch_github_repos, install_cloud_repo_async, reinstall_tool_async,
+        uninstall_tool, parse_linkme
+    )
+    from core.identity_manager import (
+        get_client_identity, send_identity_webhook, get_webhook_url,
+        install_global_exception_hook
+    )
 except ModuleNotFoundError:
     from settings_panel import SettingsPanel
     from tool_box_widget import ToolCardWidget
-    from identity_manager import get_client_identity, send_identity_webhook, get_webhook_url, install_global_exception_hook
+    from cloud_manager import (
+        fetch_github_repos, install_cloud_repo_async, reinstall_tool_async,
+        uninstall_tool, parse_linkme
+    )
+    from identity_manager import (
+        get_client_identity, send_identity_webhook, get_webhook_url,
+        install_global_exception_hook
+    )
 
-# 立即安裝全域崩潰與異常攔截器 (含加密 Webhook 推播)
+# 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.2"
+VERSION = "2.0.3"
 
 
 def set_native_topmost(win_id: int, is_topmost: bool):
     """
-    使用 Windows 原生 Win32 API 設置視窗置頂，絕不觸發 Qt 重建視窗
+    使用 Windows 原生 Win32 API 設置視窗置頂
     """
     try:
         HWND_TOPMOST = -1
@@ -53,39 +68,57 @@ def set_native_topmost(win_id: int, is_topmost: bool):
 
 class BoxLobbyInterface(QWidget):
     """
-    收納盒大廳主頁面 (全圖示平鋪網格)
+    收納盒大廳主頁面 (支援「已安裝」與「未安裝/雲端」分頁切換)
     """
     def __init__(self, parent_window, parent=None):
         super().__init__(parent)
         self.parent_window = parent_window
         self.setObjectName("boxLobbyInterface")
+        self.current_category = "installed"
         self.card_widgets = []
+        self.cloud_repos = []
         self.init_ui()
 
     def init_ui(self):
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(28, 24, 28, 24)
-        self.layout.setSpacing(18)
+        self.layout.setContentsMargins(28, 20, 28, 20)
+        self.layout.setSpacing(14)
 
-        # 1. Top Header & Search Bar
+        # 1. 頂部工具列 (標題 + 分段切換 + 搜尋框 + 重新整理)
         top_bar = QHBoxLayout()
         title_box = QVBoxLayout()
         self.title_label = SubtitleLabel("📦 軟體收納盒 (Tool Box)", self)
-        self.sub_label = CaptionLabel("點擊或雙擊圖示即可啟動小工具，支援右鍵快捷選單", self)
+        self.sub_label = CaptionLabel("點擊啟動工具，支援右鍵選單重新拉取、解除安裝與雲端下載", self)
         title_box.addWidget(self.title_label)
         title_box.addWidget(self.sub_label)
         top_bar.addLayout(title_box)
         top_bar.addStretch(1)
 
+        # 分段切換器 (已安裝 / 未安裝)
+        self.pivot = SegmentedWidget(self)
+        self.pivot.addItem("installed", "🟢 已安裝", onClick=lambda: self.switch_category("installed"))
+        self.pivot.addItem("uninstalled", "☁️ 未安裝", onClick=lambda: self.switch_category("uninstalled"))
+        self.pivot.setCurrentItem("installed")
+        top_bar.addWidget(self.pivot)
+
+        top_bar.addSpacing(16)
+
+        # 搜尋框
         self.search_input = SearchLineEdit(self)
         self.search_input.setPlaceholderText("🔍 搜尋小工具...")
-        self.search_input.setFixedWidth(240)
+        self.search_input.setFixedWidth(200)
         self.search_input.textChanged.connect(self.on_search_changed)
         top_bar.addWidget(self.search_input)
 
+        # 重新整理按鈕
+        self.btn_refresh = TransparentToolButton(FluentIcon.SYNC, self)
+        self.btn_refresh.setToolTip("重新整理列表與雲端庫")
+        self.btn_refresh.clicked.connect(self.refresh_all)
+        top_bar.addWidget(self.btn_refresh)
+
         self.layout.addLayout(top_bar)
 
-        # 2. Scroll Area for Tool Grid
+        # 2. 工具卡片平鋪網格
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
@@ -94,37 +127,106 @@ class BoxLobbyInterface(QWidget):
         self.container = QWidget()
         self.container.setStyleSheet("background: transparent;")
         self.grid_layout = QGridLayout(self.container)
-        self.grid_layout.setContentsMargins(4, 8, 8, 8)
+        self.grid_layout.setContentsMargins(4, 6, 8, 6)
         self.grid_layout.setSpacing(18)
         self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
         self.scroll_area.setWidget(self.container)
         self.layout.addWidget(self.scroll_area)
 
+        # 初始載入
         self.load_and_render_tools()
+        self.fetch_cloud_repos_async()
+
+    def switch_category(self, cat: str):
+        self.current_category = cat
+        self.load_and_render_tools(filter_text=self.search_input.text().strip())
+
+    def refresh_all(self):
+        self.parent_window.reload_registry()
+        self.fetch_cloud_repos_async()
+        self.load_and_render_tools(filter_text=self.search_input.text().strip())
+        InfoBar.info(
+            title="🔄 已重新整理",
+            content="小工具列表與雲端狀態已同步！",
+            orient=Qt.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=2000,
+            parent=self
+        )
+
+    def fetch_cloud_repos_async(self):
+        def _callback(success, data):
+            if success:
+                self.cloud_repos = data
+                # 更新分頁標籤計數
+                self.update_tab_counts()
+                if self.current_category == "uninstalled":
+                    self.load_and_render_tools(filter_text=self.search_input.text().strip())
+
+        fetch_github_repos(_callback)
+
+    def update_tab_counts(self):
+        installed_tools = self.parent_window.load_tools()
+        installed_count = len(installed_tools)
+        installed_names = [t.get("name", "").lower() for t in installed_tools]
+        
+        uninstalled_count = 0
+        for r in self.cloud_repos:
+            rname = r.get("name", "").lower()
+            if rname not in installed_names:
+                uninstalled_count += 1
+
+        # 更新 SegmentedWidget 文字
+        try:
+            self.pivot.items['installed'].setText(f"🟢 已安裝 ({installed_count})")
+            if uninstalled_count > 0:
+                self.pivot.items['uninstalled'].setText(f"☁️ 未安裝 ({uninstalled_count})")
+        except Exception:
+            pass
 
     def load_and_render_tools(self, filter_text: str = ""):
         for c in self.card_widgets:
             c.deleteLater()
         self.card_widgets.clear()
 
-        tools = self.parent_window.load_tools()
+        installed_tools = self.parent_window.load_tools()
         icon_size = self.parent_window.settings.get("icon_size", 56)
+        matched_items = []
 
-        matched_tools = []
-        for t in tools:
-            name = t.get("name", "")
-            desc = t.get("description", "")
-            if filter_text:
-                if filter_text.lower() not in name.lower() and filter_text.lower() not in desc.lower():
+        if self.current_category == "installed":
+            # === 已安裝清單 ===
+            for t in installed_tools:
+                name = t.get("name", "")
+                desc = t.get("description", "")
+                if filter_text:
+                    if filter_text.lower() not in name.lower() and filter_text.lower() not in desc.lower():
+                        continue
+                matched_items.append((t, True))
+        else:
+            # === 未安裝 / 雲端清單 ===
+            installed_names = [t.get("name", "").lower() for t in installed_tools]
+            installed_wdirs = [os.path.basename(t.get("working_dir", "")).lower() for t in installed_tools]
+
+            for repo in self.cloud_repos:
+                rname = repo.get("name", "")
+                rdesc = repo.get("description") or ""
+                # 若已安裝則跳過
+                if rname.lower() in installed_names or rname.lower() in installed_wdirs:
                     continue
-            matched_tools.append(t)
 
-        if not matched_tools:
+                if filter_text:
+                    if filter_text.lower() not in rname.lower() and filter_text.lower() not in rdesc.lower():
+                        continue
+                matched_items.append((repo, False))
+
+        if not matched_items:
             empty_card = CardWidget(self.container)
             elayout = QVBoxLayout(empty_card)
             elayout.setContentsMargins(30, 40, 30, 40)
-            msg = SubtitleLabel("🔍 未找到符合條件的小工具", empty_card)
+            msg_text = "🔍 未找到已安裝的小工具" if self.current_category == "installed" else "☁️ 雲端小工具皆已安裝完畢"
+            msg = SubtitleLabel(msg_text, empty_card)
             msg.setAlignment(Qt.AlignCenter)
             elayout.addWidget(msg)
             self.grid_layout.addWidget(empty_card, 0, 0, 1, 4)
@@ -132,13 +234,25 @@ class BoxLobbyInterface(QWidget):
             return
 
         cols = 5
-        for idx, tool in enumerate(matched_tools):
+        for idx, (data, is_inst) in enumerate(matched_items):
             row = idx // cols
             col = idx % cols
-            card = ToolCardWidget(tool, icon_size=icon_size, parent=self.container)
-            card.toolClicked.connect(self.parent_window.launch_tool)
+            card = ToolCardWidget(data, is_installed=is_inst, icon_size=icon_size, parent=self.container)
+            
+            # Connect Signals
+            card.toolClicked.connect(self.on_tool_clicked)
+            card.installRequested.connect(self.parent_window.install_cloud_tool)
+            card.reinstallRequested.connect(self.parent_window.reinstall_tool)
+            card.uninstallRequested.connect(self.parent_window.uninstall_tool)
+
             self.grid_layout.addWidget(card, row, col)
             self.card_widgets.append(card)
+
+    def on_tool_clicked(self, data: dict, is_installed: bool):
+        if is_installed:
+            self.parent_window.launch_tool(data)
+        else:
+            self.parent_window.install_cloud_tool(data)
 
     def on_search_changed(self, text: str):
         self.load_and_render_tools(filter_text=text.strip())
@@ -156,14 +270,16 @@ class AIToolLauncherV2(MSFluentWindow):
     def __init__(self):
         super().__init__()
         self.config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "config")
+        self.cloud_tools_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "CloudTools")
         self.registry_file = os.path.join(self.config_dir, "registry.json")
         self.settings_file = os.path.join(self.config_dir, "v2_settings.json")
+        self.registry = self.load_registry()
 
         self.init_settings()
         self.init_window()
         self.init_navigation()
 
-        threading.Thread(target=lambda: send_identity_webhook("🚀 啟動 AIToolLauncher 2.0 (圓角收納盒模式)", "使用者已成功開啟 AIToolLauncher 2.0 大廳。"), daemon=True).start()
+        threading.Thread(target=lambda: send_identity_webhook("🚀 啟動 AIToolLauncher 2.0 (收納盒模式)", "使用者已成功開啟 AIToolLauncher 2.0 大廳。"), daemon=True).start()
 
     def init_settings(self):
         self.settings_panel = SettingsPanel(self.settings_file, self)
@@ -176,10 +292,10 @@ class AIToolLauncherV2(MSFluentWindow):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
-        self.resize(920, 620)
-        self.setMinimumSize(720, 480)
+        self.resize(960, 640)
+        self.setMinimumSize(740, 500)
 
-        # 建立右上角置頂圖釘按鈕 (位於隱藏/最小化視窗按鈕左側)
+        # 建立右上角置頂圖釘按鈕 (位於最小化按鈕左側)
         self.is_topmost = self.settings.get("always_on_top", False)
         self.pin_btn = TransparentToolButton(FluentIcon.PIN, self.titleBar)
         self.pin_btn.setFixedSize(38, 32)
@@ -231,15 +347,28 @@ class AIToolLauncherV2(MSFluentWindow):
         # 2. 個性化設定
         self.addSubInterface(self.settings_panel, FluentIcon.SETTING, "個性化設置", position=NavigationItemPosition.BOTTOM)
 
-    def load_tools(self) -> list:
+    def load_registry(self) -> dict:
         if os.path.exists(self.registry_file):
             try:
                 with open(self.registry_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    return data.get("tools", [])
+                    return json.load(f)
             except Exception:
                 pass
-        return []
+        return {"tools": []}
+
+    def save_registry(self):
+        try:
+            os.makedirs(self.config_dir, exist_ok=True)
+            with open(self.registry_file, "w", encoding="utf-8") as f:
+                json.dump(self.registry, f, indent=4, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def reload_registry(self):
+        self.registry = self.load_registry()
+
+    def load_tools(self) -> list:
+        return self.registry.get("tools", [])
 
     def apply_live_settings(self, s: dict):
         self.settings = s
@@ -293,6 +422,121 @@ class AIToolLauncherV2(MSFluentWindow):
                 send_identity_webhook(f"💥 工具異常: {name}", f"啟動失敗: {str(e)}")
 
         threading.Thread(target=_run, daemon=True).start()
+
+    def install_cloud_tool(self, repo_data: dict):
+        repo_name = repo_data.get("name", "小工具")
+        InfoBar.info(
+            title="📥 正在下載安裝",
+            content=f"開始從 GitHub 下載 【{repo_name}】...",
+            orient=Qt.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=3500,
+            parent=self
+        )
+
+        def on_status(msg):
+            pass
+
+        def on_finished(success, msg, tool_entry):
+            if success and tool_entry:
+                # 註冊進 registry
+                self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != tool_entry["name"]]
+                self.registry.setdefault("tools", []).append(tool_entry)
+                self.save_registry()
+
+                InfoBar.success(
+                    title="🎉 安裝完成",
+                    content=msg,
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=4000,
+                    parent=self
+                )
+                self.box_lobby.refresh_all()
+            else:
+                InfoBar.error(
+                    title="❌ 安裝失敗",
+                    content=msg,
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=5000,
+                    parent=self
+                )
+
+        install_cloud_repo_async(repo_data, self.cloud_tools_dir, sys.executable, on_status, on_finished)
+
+    def reinstall_tool(self, tool_data: dict):
+        name = tool_data.get("name", "小工具")
+        InfoBar.info(
+            title="🔄 正在重新拉取",
+            content=f"正在同步 【{name}】 最新程式碼與套件...",
+            orient=Qt.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=3500,
+            parent=self
+        )
+
+        def on_status(msg):
+            pass
+
+        def on_finished(success, msg, updated_tool):
+            if success:
+                self.save_registry()
+                InfoBar.success(
+                    title="🟢 更新完成",
+                    content=msg,
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=3500,
+                    parent=self
+                )
+                self.box_lobby.refresh_all()
+            else:
+                InfoBar.error(
+                    title="❌ 更新失敗",
+                    content=msg,
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=4500,
+                    parent=self
+                )
+
+        reinstall_tool_async(tool_data, sys.executable, on_status, on_finished)
+
+    def uninstall_tool(self, tool_data: dict):
+        name = tool_data.get("name", "小工具")
+        
+        w = MessageBox(
+            f"🗑️ 確認移除 【{name}】",
+            f"您確定要將 【{name}】 從收納盒中解除安裝嗎？\n\n若是雲端專案，將同時清除其本機資料夾，並重置為「未安裝」狀態。",
+            self
+        )
+        if not w.exec():
+            return
+
+        # 1. 刪除資料夾 (若在 CloudTools)
+        uninstall_tool(tool_data, self.cloud_tools_dir)
+
+        # 2. 從 registry 移除
+        self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != name]
+        self.save_registry()
+
+        InfoBar.success(
+            title="🗑️ 已移除小工具",
+            content=f"已成功將 【{name}】 從收納盒移除。",
+            orient=Qt.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=3000,
+            parent=self
+        )
+        self.box_lobby.refresh_all()
 
 
 def main():
