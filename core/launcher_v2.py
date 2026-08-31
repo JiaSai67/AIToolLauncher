@@ -662,15 +662,15 @@ class AIToolLauncherV2(MSFluentWindow):
     def install_cloud_tool(self, repo_data: dict):
         repo_name = repo_data.get("name", "小工具")
         
-        # 1. 未安裝處的該專案向內收縮並啵一聲消失 (Shrink Collapse Animation)
+        # 1. 從未安裝區塊移除卡片
         for i in range(self.box_lobby.uninstalled_flow_layout.count()):
             item = self.box_lobby.uninstalled_flow_layout.itemAt(i)
             w = item.widget() if item else None
             if isinstance(w, ToolCardWidget) and (w.data.get("name") == repo_name or w.data.get("repo_name") == repo_name):
-                w.shrink_collapse_animation(on_finished=lambda card=w: card.deleteLater())
+                w.deleteLater()
                 break
 
-        # 2. 同步在「已安裝」類別建立偏黑專案卡片，並從中向外擴展彈出 (Popup Expand Animation)
+        # 2. 在「已安裝」區塊建立安裝中卡片
         temp_tool_data = {
             "name": repo_name,
             "repo_name": repo_name,
@@ -684,7 +684,6 @@ class AIToolLauncherV2(MSFluentWindow):
         installing_card.set_install_progress(5, "正在連線...")
         
         self.box_lobby.installed_flow_layout.addWidget(installing_card)
-        installing_card.popup_expand_animation()
         self.installing_cards[repo_name] = installing_card
 
         def _on_progress(pct, msg):
@@ -708,13 +707,21 @@ class AIToolLauncherV2(MSFluentWindow):
             self.registry.setdefault("tools", []).append(tool_entry)
             self.save_registry()
 
-            # 3. 完成安裝時：金色鋪滿 ➔ 綠色打勾 ➔ 從下至上平滑覆蓋替換為原生大圖標 (圖三) (100% 就地替換，不重建佈局、無任何彈窗閃現)
             if card:
                 card.data = tool_entry
                 card.is_installed = True
                 card.title_label.setText(tool_entry.get("name", card.title_label.text()))
-                card.set_install_progress(100, "✅ 安裝完成")
-                card.play_install_success_celebration(on_finished=lambda c=card: self._on_install_celebration_complete(c))
+                card.badge_label.hide()
+                card.apply_state(ToolCardWidget.STATE_IDLE)
+                try:
+                    card.toolClicked.disconnect()
+                except Exception:
+                    pass
+                card.toolClicked.connect(lambda d, inst, c=card: self.launch_tool(d, card=c))
+                card.reinstallRequested.connect(self.reinstall_tool)
+                card.uninstallRequested.connect(self.uninstall_tool)
+                self.box_lobby.installed_header.setText(f"🟢 已安裝 ({self.box_lobby.installed_flow_layout.count()})")
+                self.box_lobby.uninstalled_header.setText(f"☁️ 雲端庫 / 未安裝 ({self.box_lobby.uninstalled_flow_layout.count()})")
             else:
                 self.box_lobby.refresh_all(show_prompt=False)
         else:
@@ -729,19 +736,6 @@ class AIToolLauncherV2(MSFluentWindow):
                 duration=5000,
                 parent=self
             )
-
-    def _on_install_celebration_complete(self, card: ToolCardWidget):
-        """安裝慶祝完成後就地轉正為正式已安裝卡片，完全不重刷介面與佈局"""
-        try:
-            card.badge_label.hide()
-            card.toolClicked.disconnect()
-        except Exception:
-            pass
-        card.toolClicked.connect(lambda d, inst, c=card: self.launch_tool(d, card=c))
-        card.reinstallRequested.connect(self.reinstall_tool)
-        card.uninstallRequested.connect(self.uninstall_tool)
-        self.box_lobby.installed_header.setText(f"🟢 已安裝 ({self.box_lobby.installed_flow_layout.count()})")
-        self.box_lobby.uninstalled_header.setText(f"☁️ 雲端庫 / 未安裝 ({self.box_lobby.uninstalled_flow_layout.count()})")
 
     def reinstall_tool(self, tool_data: dict):
         name = tool_data.get("name", "小工具")
@@ -786,37 +780,10 @@ class AIToolLauncherV2(MSFluentWindow):
         if not w.exec():
             return
 
-        # 3. 解除安裝時：被移除的已安裝卡片向內收縮消失 (Shrink Collapse)
-        for i in range(self.box_lobby.installed_flow_layout.count()):
-            item = self.box_lobby.installed_flow_layout.itemAt(i)
-            c = item.widget() if item else None
-            if isinstance(c, ToolCardWidget) and c.data.get("name") == name:
-                c.shrink_collapse_animation(on_finished=lambda: self._finish_uninstall(tool_data))
-                return
-
-        self._finish_uninstall(tool_data)
-
-    def _finish_uninstall(self, tool_data: dict):
-        name = tool_data.get("name", "小工具")
-        # 1. 刪除資料夾 (若在 CloudTools)
         uninstall_tool(tool_data, self.cloud_tools_dir)
-
-        # 2. 從 registry 移除
         self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != name]
         self.save_registry()
-
         self.box_lobby.refresh_all(show_prompt=False)
-
-        # 3. 未安裝處重新出現的專案執行從中向外彈出動畫 (Popup Expand)
-        QTimer.singleShot(100, lambda: self._animate_new_uninstalled_card(name))
-
-    def _animate_new_uninstalled_card(self, name: str):
-        for i in range(self.box_lobby.uninstalled_flow_layout.count()):
-            item = self.box_lobby.uninstalled_flow_layout.itemAt(i)
-            c = item.widget() if item else None
-            if isinstance(c, ToolCardWidget) and (c.data.get("name") == name or c.data.get("repo_name") == name):
-                c.popup_expand_animation()
-                break
 
 
 def main():
