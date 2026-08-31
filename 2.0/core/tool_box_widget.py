@@ -136,7 +136,7 @@ class CategoryBoxWidget(CardWidget):
         self.count_badge = CaptionLabel(f"({len(self.tools)} 個項目)", self)
         self.count_badge.setStyleSheet("color: #888888; font-weight: bold;")
 
-        self.toggle_btn = TransparentToolButton(FluentIcon.CHEVRON_UP_MED, self)
+        self.toggle_btn = TransparentToolButton(FluentIcon.CHEVRON_DOWN_MED, self)
         self.toggle_btn.setToolTip("折疊 / 展開收納盒")
         self.toggle_btn.clicked.connect(self.toggle_collapse)
 
@@ -178,6 +178,6 @@ class CategoryBoxWidget(CardWidget):
         self.is_collapsed = not self.is_collapsed
         self.grid_container.setVisible(not self.is_collapsed)
         if self.is_collapsed:
-            self.toggle_btn.setIcon(FluentIcon.CHEVRON_DOWN_MED)
+            self.toggle_btn.setIcon(FluentIcon.CHEVRON_RIGHT_MED)
         else:
-            self.toggle_btn.setIcon(FluentIcon.CHEVRON_UP_MED)
+            self.toggle_btn.setIcon(FluentIcon.CHEVRON_DOWN_MED)

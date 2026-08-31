@@ -14,6 +14,7 @@ class SettingsPanel(QWidget):
 
     def __init__(self, settings_file: str, parent=None):
         super().__init__(parent)
+        self.setObjectName("settingsInterface")
         self.settings_file = settings_file
         self.settings = self.load_settings()
         self.init_ui()
