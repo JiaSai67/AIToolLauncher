@@ -1,4 +1,4 @@
-import os, sys, json, subprocess, threading, ctypes
+import os, sys, json, subprocess, threading, ctypes, re
 
 # Guard for pythonw (sys.stdout/stderr are None in GUI mode)
 if sys.stdout is None:
@@ -9,14 +9,14 @@ if sys.stderr is None:
 from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QScrollArea, QFrame, QSizePolicy
 )
 from qfluentwidgets import (
     MSFluentWindow, NavigationItemPosition, FluentIcon, SearchLineEdit,
     SubtitleLabel, CaptionLabel, InfoBar, InfoBarPosition, setTheme,
     Theme, setThemeColor, CardWidget, BodyLabel, TransparentToolButton,
-    StrongBodyLabel, MessageBox
+    StrongBodyLabel, MessageBox, FlowLayout
 )
 
 # Relative imports
@@ -46,7 +46,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.4"
+VERSION = "2.0.5"
 
 
 def set_native_topmost(win_id: int, is_topmost: bool):
@@ -66,16 +66,29 @@ def set_native_topmost(win_id: int, is_topmost: bool):
         pass
 
 
+def clear_layout(layout):
+    """
+    徹底清除 Layout 中的所有元件，避免殘留幽靈佈局
+    """
+    if layout is None:
+        return
+    while layout.count():
+        item = layout.takeAt(0)
+        w = item.widget()
+        if w:
+            w.setParent(None)
+            w.deleteLater()
+
+
 class BoxLobbyInterface(QWidget):
     """
     收納盒大廳主頁面 (同頁雙區塊：上方「已安裝」、下方「未安裝」)
+    採用自適應 FlowLayout 流式卡片網格，保證元件永不收縮摺疊
     """
     def __init__(self, parent_window, parent=None):
         super().__init__(parent)
         self.parent_window = parent_window
         self.setObjectName("boxLobbyInterface")
-        self.installed_cards = []
-        self.uninstalled_cards = []
         self.cloud_repos = []
         self.init_ui()
 
@@ -98,6 +111,7 @@ class BoxLobbyInterface(QWidget):
         self.search_input = SearchLineEdit(self)
         self.search_input.setPlaceholderText("🔍 搜尋小工具...")
         self.search_input.setFixedWidth(220)
+        self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self.on_search_changed)
         top_bar.addWidget(self.search_input)
 
@@ -118,24 +132,20 @@ class BoxLobbyInterface(QWidget):
         self.container = QWidget()
         self.container.setStyleSheet("background: transparent;")
         self.content_layout = QVBoxLayout(self.container)
-        self.content_layout.setContentsMargins(4, 4, 8, 16)
-        self.content_layout.setSpacing(22)
+        self.content_layout.setContentsMargins(4, 4, 8, 24)
+        self.content_layout.setSpacing(18)
 
         # === 上方區塊: 🟢 已安裝 ===
-        self.installed_box = QVBoxLayout()
-        self.installed_box.setSpacing(10)
         self.installed_header = StrongBodyLabel("🟢 已安裝", self.container)
         self.installed_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #6CCB5F;")
-        self.installed_box.addWidget(self.installed_header)
+        self.content_layout.addWidget(self.installed_header)
 
-        self.installed_grid_widget = QWidget(self.container)
-        self.installed_grid_layout = QGridLayout(self.installed_grid_widget)
-        self.installed_grid_layout.setContentsMargins(0, 0, 0, 0)
-        self.installed_grid_layout.setSpacing(18)
-        self.installed_grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self.installed_box.addWidget(self.installed_grid_widget)
-
-        self.content_layout.addLayout(self.installed_box)
+        self.installed_flow_widget = QWidget(self.container)
+        self.installed_flow_widget.setStyleSheet("background: transparent;")
+        self.installed_flow_layout = FlowLayout(self.installed_flow_widget, needAni=False)
+        self.installed_flow_layout.setContentsMargins(0, 4, 0, 8)
+        self.installed_flow_layout.setSpacing(16)
+        self.content_layout.addWidget(self.installed_flow_widget)
 
         # 分隔線
         self.divider = QFrame(self.container)
@@ -143,23 +153,19 @@ class BoxLobbyInterface(QWidget):
         self.divider.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); max-height: 1px;")
         self.content_layout.addWidget(self.divider)
 
-        # === 下方區塊: ☁️ 未安裝 ===
-        self.uninstalled_box = QVBoxLayout()
-        self.uninstalled_box.setSpacing(10)
+        # === 下方區塊: ☁️ 雲端庫 / 未安裝 ===
         self.uninstalled_header = StrongBodyLabel("☁️ 雲端庫 / 未安裝", self.container)
         self.uninstalled_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #9A70FF;")
-        self.uninstalled_box.addWidget(self.uninstalled_header)
+        self.content_layout.addWidget(self.uninstalled_header)
 
-        self.uninstalled_grid_widget = QWidget(self.container)
-        self.uninstalled_grid_layout = QGridLayout(self.uninstalled_grid_widget)
-        self.uninstalled_grid_layout.setContentsMargins(0, 0, 0, 0)
-        self.uninstalled_grid_layout.setSpacing(18)
-        self.uninstalled_grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self.uninstalled_box.addWidget(self.uninstalled_grid_widget)
+        self.uninstalled_flow_widget = QWidget(self.container)
+        self.uninstalled_flow_widget.setStyleSheet("background: transparent;")
+        self.uninstalled_flow_layout = FlowLayout(self.uninstalled_flow_widget, needAni=False)
+        self.uninstalled_flow_layout.setContentsMargins(0, 4, 0, 8)
+        self.uninstalled_flow_layout.setSpacing(16)
+        self.content_layout.addWidget(self.uninstalled_flow_widget)
 
-        self.content_layout.addLayout(self.uninstalled_box)
         self.content_layout.addStretch(1)
-
         self.scroll_area.setWidget(self.container)
         self.layout.addWidget(self.scroll_area)
 
@@ -190,15 +196,12 @@ class BoxLobbyInterface(QWidget):
         fetch_github_repos(_callback)
 
     def load_and_render_tools(self, filter_text: str = ""):
-        # 1. 清理現有卡片
-        for c in self.installed_cards + self.uninstalled_cards:
-            c.deleteLater()
-        self.installed_cards.clear()
-        self.uninstalled_cards.clear()
+        # 1. 清除舊有元件
+        clear_layout(self.installed_flow_layout)
+        clear_layout(self.uninstalled_flow_layout)
 
         installed_tools = self.parent_window.load_tools()
         icon_size = self.parent_window.settings.get("icon_size", 56)
-        cols = 5
 
         # 2. 渲染已安裝區塊 (上方)
         matched_installed = []
@@ -213,20 +216,16 @@ class BoxLobbyInterface(QWidget):
         self.installed_header.setText(f"🟢 已安裝 ({len(matched_installed)})")
 
         if matched_installed:
-            for idx, tool in enumerate(matched_installed):
-                row = idx // cols
-                col = idx % cols
-                card = ToolCardWidget(tool, is_installed=True, icon_size=icon_size, parent=self.installed_grid_widget)
+            for tool in matched_installed:
+                card = ToolCardWidget(tool, is_installed=True, icon_size=icon_size, parent=self.installed_flow_widget)
                 card.toolClicked.connect(lambda d, inst: self.parent_window.launch_tool(d))
                 card.reinstallRequested.connect(self.parent_window.reinstall_tool)
                 card.uninstallRequested.connect(self.parent_window.uninstall_tool)
-                self.installed_grid_layout.addWidget(card, row, col)
-                self.installed_cards.append(card)
+                self.installed_flow_layout.addWidget(card)
         else:
-            empty_msg = CaptionLabel("（無符合條件的已安裝小工具）", self.installed_grid_widget)
+            empty_msg = CaptionLabel("（無符合條件的已安裝小工具）", self.installed_flow_widget)
             empty_msg.setStyleSheet("color: #888888; padding: 10px;")
-            self.installed_grid_layout.addWidget(empty_msg, 0, 0)
-            self.installed_cards.append(empty_msg)
+            self.installed_flow_layout.addWidget(empty_msg)
 
         # 3. 渲染未安裝區塊 (下方)
         installed_names = [t.get("name", "").lower() for t in installed_tools]
@@ -247,28 +246,32 @@ class BoxLobbyInterface(QWidget):
         self.uninstalled_header.setText(f"☁️ 雲端庫 / 未安裝 ({len(matched_uninstalled)})")
 
         if matched_uninstalled:
-            for idx, repo in enumerate(matched_uninstalled):
-                row = idx // cols
-                col = idx % cols
-                card = ToolCardWidget(repo, is_installed=False, icon_size=icon_size, parent=self.uninstalled_grid_widget)
+            for repo in matched_uninstalled:
+                card = ToolCardWidget(repo, is_installed=False, icon_size=icon_size, parent=self.uninstalled_flow_widget)
                 card.toolClicked.connect(lambda d, inst: self.parent_window.install_cloud_tool(d))
                 card.installRequested.connect(self.parent_window.install_cloud_tool)
-                self.uninstalled_grid_layout.addWidget(card, row, col)
-                self.uninstalled_cards.append(card)
+                self.uninstalled_flow_layout.addWidget(card)
         else:
             empty_text = "（所有雲端小工具皆已安裝完畢）" if self.cloud_repos else "（正在向 GitHub 查詢雲端庫...）"
-            empty_msg = CaptionLabel(empty_text, self.uninstalled_grid_widget)
+            empty_msg = CaptionLabel(empty_text, self.uninstalled_flow_widget)
             empty_msg.setStyleSheet("color: #888888; padding: 10px;")
-            self.uninstalled_grid_layout.addWidget(empty_msg, 0, 0)
-            self.uninstalled_cards.append(empty_msg)
+            self.uninstalled_flow_layout.addWidget(empty_msg)
 
     def on_search_changed(self, text: str):
         self.load_and_render_tools(filter_text=text.strip())
 
     def update_icon_size(self, size: int):
-        for card in self.installed_cards + self.uninstalled_cards:
-            if isinstance(card, ToolCardWidget):
-                card.set_icon_size(size)
+        for i in range(self.installed_flow_layout.count()):
+            item = self.installed_flow_layout.itemAt(i)
+            w = item.widget() if item else None
+            if isinstance(w, ToolCardWidget):
+                w.set_icon_size(size)
+
+        for i in range(self.uninstalled_flow_layout.count()):
+            item = self.uninstalled_flow_layout.itemAt(i)
+            w = item.widget() if item else None
+            if isinstance(w, ToolCardWidget):
+                w.set_icon_size(size)
 
 
 class AIToolLauncherV2(MSFluentWindow):
@@ -432,8 +435,20 @@ class AIToolLauncherV2(MSFluentWindow):
                         cand = python_exe.lower().replace("python.exe", "pythonw.exe")
                         if os.path.exists(cand):
                             python_exe = cand
+
+                    # 注入獨立 AppUserModelID，使 Windows 工作列顯示小工具自己的獨立圖標，而非 Python 預設圖示
+                    safe_app_id = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+                    boot_script = (
+                        f"import ctypes, sys, os; "
+                        f"ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(r'AITool.{safe_app_id}'); "
+                        f"sys.path.insert(0, r'{wdir}'); "
+                        f"os.chdir(r'{wdir}'); "
+                        f"__file__ = r'{exe}'; "
+                        f"exec(compile(open(r'{exe}', 'rb').read(), r'{exe}', 'exec'))"
+                    )
+
                     subprocess.Popen(
-                        [python_exe, exe],
+                        [python_exe, "-c", boot_script],
                         cwd=wdir,
                         creationflags=detached_flags,
                         close_fds=True,
