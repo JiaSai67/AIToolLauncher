@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     MSFluentWindow, NavigationItemPosition, FluentIcon, SearchLineEdit,
     SubtitleLabel, CaptionLabel, InfoBar, InfoBarPosition, setTheme,
-    Theme, setThemeColor, CardWidget, BodyLabel
+    Theme, setThemeColor, CardWidget, BodyLabel, TransparentToolButton
 )
 
 # Relative imports
@@ -179,7 +179,49 @@ class AIToolLauncherV2(MSFluentWindow):
         self.resize(920, 620)
         self.setMinimumSize(720, 480)
 
+        # 建立右上角置頂圖釘按鈕 (位於隱藏/最小化視窗按鈕左側)
+        self.is_topmost = self.settings.get("always_on_top", False)
+        self.pin_btn = TransparentToolButton(FluentIcon.PIN, self.titleBar)
+        self.pin_btn.setFixedSize(38, 32)
+        self.pin_btn.setIconSize(QSize(15, 15))
+        self.pin_btn.clicked.connect(self.toggle_pin_topmost)
+        self.titleBar.buttonLayout.insertWidget(0, self.pin_btn)
+        self.update_pin_button_state()
+
         self.apply_live_settings(self.settings)
+
+    def toggle_pin_topmost(self):
+        self.is_topmost = not self.is_topmost
+        self.settings["always_on_top"] = self.is_topmost
+        self.settings_panel.save_settings()
+        self.update_pin_button_state()
+        set_native_topmost(self.winId(), self.is_topmost)
+
+    def update_pin_button_state(self):
+        if self.is_topmost:
+            self.pin_btn.setStyleSheet("""
+                TransparentToolButton {
+                    background-color: rgba(154, 112, 255, 0.28);
+                    border: 1px solid rgba(154, 112, 255, 0.5);
+                    border-radius: 4px;
+                }
+                TransparentToolButton:hover {
+                    background-color: rgba(154, 112, 255, 0.42);
+                }
+            """)
+            self.pin_btn.setToolTip("📌 視窗已置頂 (點擊取消置頂)")
+        else:
+            self.pin_btn.setStyleSheet("""
+                TransparentToolButton {
+                    background-color: transparent;
+                    border: none;
+                    border-radius: 4px;
+                }
+                TransparentToolButton:hover {
+                    background-color: rgba(255, 255, 255, 0.12);
+                }
+            """)
+            self.pin_btn.setToolTip("📌 視窗置頂 (點擊固定在最上層)")
 
     def init_navigation(self):
         # 1. 收納盒大廳
@@ -211,9 +253,8 @@ class AIToolLauncherV2(MSFluentWindow):
         if hasattr(self, "box_lobby"):
             self.box_lobby.update_icon_size(icon_size)
 
-        # 3. 視窗置頂 (使用 Win32 API 原生即時生效)
-        always_top = s.get("always_on_top", False)
-        set_native_topmost(self.winId(), always_top)
+        # 3. 視窗置頂
+        set_native_topmost(self.winId(), self.is_topmost)
 
     def launch_tool(self, tool_data: dict):
         name = tool_data.get("name", "小工具")

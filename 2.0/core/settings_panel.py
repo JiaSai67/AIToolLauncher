@@ -5,8 +5,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     SubtitleLabel, BodyLabel, CaptionLabel, StrongBodyLabel,
-    Slider, RadioButton, CheckBox, CardWidget,
-    setTheme, Theme
+    Slider, RadioButton, CardWidget, setTheme, Theme
 )
 
 class SettingsPanel(QWidget):
@@ -51,7 +50,7 @@ class SettingsPanel(QWidget):
         # Title
         title_box = QVBoxLayout()
         title = SubtitleLabel("🎨 個性化設置 (Settings)", self)
-        subtitle = CaptionLabel("即時調節視窗透明度、圖示尺寸、外觀主題與視窗置頂行為", self)
+        subtitle = CaptionLabel("即時自訂收納盒的視窗透明度、圖示尺寸與深淺主題模式", self)
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
         main_layout.addLayout(title_box)
@@ -93,10 +92,6 @@ class SettingsPanel(QWidget):
         # 3. 外觀主題 Card (跟隨系統 / 淺色 / 深色)
         self.theme_card = self.create_theme_card()
         c_layout.addWidget(self.theme_card)
-
-        # 4. 視窗置頂 Card
-        self.behavior_card = self.create_behavior_card()
-        c_layout.addWidget(self.behavior_card)
 
         c_layout.addStretch(1)
         scroll.setWidget(container)
@@ -171,24 +166,6 @@ class SettingsPanel(QWidget):
 
         return card
 
-    def create_behavior_card(self):
-        card = CardWidget(self)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 14, 18, 14)
-        layout.setSpacing(10)
-
-        t_label = StrongBodyLabel("視窗置頂 (Always on Top)", card)
-        d_label = CaptionLabel("勾選後收納盒將保持在所有應用程式視窗的最上層顯示", card)
-        layout.addWidget(t_label)
-        layout.addWidget(d_label)
-
-        self.chk_top = CheckBox("📌 保持收納盒視窗最上層顯示", card)
-        self.chk_top.setChecked(self.settings.get("always_on_top", False))
-        self.chk_top.stateChanged.connect(self.on_top_changed)
-        layout.addWidget(self.chk_top)
-
-        return card
-
     def on_opacity_changed(self, val: int):
         self.settings["window_opacity"] = val
         self.save_settings()
@@ -208,9 +185,4 @@ class SettingsPanel(QWidget):
             setTheme(Theme.DARK)
         else:
             setTheme(Theme.AUTO)
-        self.settingsChanged.emit(self.settings)
-
-    def on_top_changed(self, state: int):
-        self.settings["always_on_top"] = (state == Qt.Checked or state == 2)
-        self.save_settings()
         self.settingsChanged.emit(self.settings)
