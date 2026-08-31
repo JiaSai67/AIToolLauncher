@@ -1,0 +1,38 @@
+{
+    "local_G:\\python\\SteamManifestUpdater\\requirements.txt": {
+        "mtime": 1787462340.2482843,
+        "status": "ready",
+        "missing": []
+    },
+    "cloud_JiaSai67/PTTApp": {
+        "updated_at": "2026-08-23T13:14:22Z",
+        "status": "ready"
+    },
+    "cloud_JiaSai67/SteamManifestUpdater": {
+        "updated_at": "2026-08-22T13:57:17Z",
+        "status": "ready"
+    },
+    "local_G:\\python\\toolLauncher\\CloudTools\\SteamManifestUpdater\\requirements.txt": {
+        "mtime": 1787559760.6502497,
+        "status": "ready",
+        "missing": []
+    },
+    "cloud_JiaSai67/AIToolLauncher": {
+        "updated_at": "2026-08-21T14:28:43Z",
+        "status": "no_req"
+    },
+    "local_G:\\python\\toolLauncher\\CloudTools\\PTTApp\\requirements.txt": {
+        "mtime": 1787862880.6246827,
+        "status": "ready",
+        "missing": []
+    },
+    "cloud_JiaSai67/xingshili": {
+        "updated_at": "2026-08-27T15:35:35Z",
+        "status": "ready"
+    },
+    "local_G:\\python\\toolLauncher\\CloudTools\\xingshili\\requirements.txt": {
+        "mtime": 1787954034.4375455,
+        "status": "ready",
+        "missing": []
+    }
+}
