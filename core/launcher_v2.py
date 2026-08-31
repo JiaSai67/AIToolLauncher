@@ -54,7 +54,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.8"
+VERSION = "2.0.9"
 
 
 def set_native_topmost(win_id: int, is_topmost: bool):
@@ -147,7 +147,7 @@ def clear_layout(layout):
 class BoxLobbyInterface(QWidget):
     """
     收納盒大廳主頁面 (同頁雙區塊：上方「已安裝」、下方「未安裝」)
-    採用自適應 FlowLayout 流式卡片網格，保證元件永不收縮摺疊
+    採用自適應 FlowLayout 流式卡片網格，圖標置中，版面美觀
     """
     cloudReposFetched = Signal(list)
 
@@ -357,7 +357,8 @@ class AIToolLauncherV2(MSFluentWindow):
     """
     AIToolLauncher 2.0 主視窗 (原生 Acrylic 壓克力圓角收納盒大廳)
     """
-    installFinished = Signal(bool, str, dict)
+    installProgressSignal = Signal(str, int, str)            # (repo_name, pct, status_text)
+    installFinished = Signal(bool, str, dict, str)           # (success, msg, tool_entry, repo_name)
     reinstallFinished = Signal(bool, str, dict)
     toolLaunchedSignal = Signal(str, int, object, object)     # (name, pid, proc, card)
     toolLaunchFailedSignal = Signal(object)                  # (card)
@@ -373,7 +374,10 @@ class AIToolLauncherV2(MSFluentWindow):
 
         # 運行中進程管理表: {tool_name: {"proc": proc, "pid": pid, "card": card, "exe": exe}}
         self.running_processes = {}
+        # 安裝中卡片管理表: {repo_name: card}
+        self.installing_cards = {}
 
+        self.installProgressSignal.connect(self.on_install_progress_slot)
         self.installFinished.connect(self.on_install_finished_slot)
         self.reinstallFinished.connect(self.on_reinstall_finished_slot)
         self.toolLaunchedSignal.connect(self.on_tool_launched_success)
@@ -554,7 +558,7 @@ class AIToolLauncherV2(MSFluentWindow):
 
         if not os.path.exists(exe):
             if card:
-                card.complete_launch_failed()
+                card.apply_state(ToolCardWidget.STATE_ERROR)
             InfoBar.error(
                 title="❌ 啟動失敗",
                 content=f"找不到執行檔：{exe}",
@@ -565,20 +569,6 @@ class AIToolLauncherV2(MSFluentWindow):
                 parent=self
             )
             return
-
-        # 2. 切換為「正在開啟中」狀態 (藍色 + 0~100% 圓形進度環特效)
-        if card:
-            card.apply_state(ToolCardWidget.STATE_STARTING)
-
-        InfoBar.info(
-            title="🚀 正在啟動工具",
-            content=f"正在以獨立背景進程喚醒 【{name}】...",
-            orient=Qt.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=2500,
-            parent=self
-        )
 
         def _run():
             try:
@@ -638,11 +628,11 @@ class AIToolLauncherV2(MSFluentWindow):
             "card": card
         }
         if card:
-            card.complete_launch_success()
+            card.apply_state(ToolCardWidget.STATE_RUNNING)
 
     def on_tool_launched_failed(self, card: ToolCardWidget):
         if card:
-            card.complete_launch_failed()
+            card.apply_state(ToolCardWidget.STATE_ERROR)
 
     def poll_running_processes(self):
         """
@@ -666,6 +656,22 @@ class AIToolLauncherV2(MSFluentWindow):
 
     def install_cloud_tool(self, repo_data: dict):
         repo_name = repo_data.get("name", "小工具")
+        
+        # 1. 立即在「已安裝」類別建立一個偏黑的專案卡片，以 0~100% 填水灌滿圖標呈現進度
+        temp_tool_data = {
+            "name": repo_name,
+            "description": repo_data.get("description", ""),
+            "executable": "",
+            "working_dir": ""
+        }
+        icon_size = self.settings.get("icon_size", 56)
+        installing_card = ToolCardWidget(temp_tool_data, is_installed=True, icon_size=icon_size, parent=self.box_lobby.installed_flow_widget)
+        installing_card.apply_state(ToolCardWidget.STATE_INSTALLING)
+        installing_card.set_install_progress(5, "正在連線...")
+        
+        self.box_lobby.installed_flow_layout.addWidget(installing_card)
+        self.installing_cards[repo_name] = installing_card
+
         InfoBar.info(
             title="📥 正在下載安裝",
             content=f"開始從 GitHub 下載 【{repo_name}】...",
@@ -676,12 +682,22 @@ class AIToolLauncherV2(MSFluentWindow):
             parent=self
         )
 
+        def _on_progress(pct, msg):
+            self.installProgressSignal.emit(repo_name, pct, msg)
+
         def _on_finished(success, msg, tool_entry):
-            self.installFinished.emit(success, msg, tool_entry or {})
+            self.installFinished.emit(success, msg, tool_entry or {}, repo_name)
 
-        install_cloud_repo_async(repo_data, self.cloud_tools_dir, sys.executable, _on_finished)
+        install_cloud_repo_async(repo_data, self.cloud_tools_dir, sys.executable, _on_finished, _on_progress)
 
-    def on_install_finished_slot(self, success: bool, msg: str, tool_entry: dict):
+    def on_install_progress_slot(self, repo_name: str, pct: int, status_text: str):
+        card = self.installing_cards.get(repo_name)
+        if card:
+            card.set_install_progress(pct, status_text)
+
+    def on_install_finished_slot(self, success: bool, msg: str, tool_entry: dict, repo_name: str):
+        card = self.installing_cards.pop(repo_name, None)
+
         if success and tool_entry:
             self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != tool_entry.get("name")]
             self.registry.setdefault("tools", []).append(tool_entry)
@@ -698,6 +714,8 @@ class AIToolLauncherV2(MSFluentWindow):
             )
             self.box_lobby.refresh_all()
         else:
+            if card:
+                card.apply_state(ToolCardWidget.STATE_ERROR)
             InfoBar.error(
                 title="❌ 安裝失敗",
                 content=msg,

@@ -160,9 +160,9 @@ def get_cloud_icon_async(repo_name: str, cache_dir: str, on_icon_ready):
 
     threading.Thread(target=_task, daemon=True).start()
 
-def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, on_finished):
+def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, on_finished, on_progress=None):
     """
-    下載並安裝雲端小工具 (git clone + linkme.bat 註冊 + pip 安裝)
+    下載並安裝雲端小工具 (git clone + linkme.bat 註冊 + pip 安裝，即時回傳 0~100% 進度)
     """
     def _task():
         repo_name = repo.get('name', '')
@@ -170,26 +170,41 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
         target_dir = os.path.join(cloud_tools_dir, repo_name)
         flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
 
+        def _report(pct, msg):
+            if on_progress:
+                on_progress(pct, msg)
+
         try:
+            _report(5, "正在連線 GitHub 倉庫...")
             os.makedirs(cloud_tools_dir, exist_ok=True)
 
-            # 徹底清空舊目錄 (處理 .git 唯讀屬性)
             if os.path.exists(target_dir):
                 force_remove_directory(target_dir)
 
-            # 1. Git Clone
+            _report(15, "開始下載原始碼...")
+
+            # 1. Git Clone (逐行讀取進度輸出)
             p = subprocess.Popen(
                 ["git", "clone", "--progress", clone_url, repo_name],
                 cwd=cloud_tools_dir, creationflags=flags,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding='utf-8', errors='replace'
             )
-            stdout_data, stderr_data = p.communicate(timeout=120)
+            
+            for line in p.stdout:
+                line_str = line.strip()
+                m = re.search(r'(\d+)%', line_str)
+                if m:
+                    pct = int(m.group(1))
+                    scaled = int(15 + pct * 0.55)
+                    _report(scaled, f"下載中 {pct}%")
+            p.wait(timeout=120)
 
             if p.returncode != 0:
-                err_msg = stderr_data.strip() or f"Git clone 失敗 (代碼: {p.returncode})"
-                on_finished(False, err_msg, None)
+                on_finished(False, f"Git clone 失敗 (代碼: {p.returncode})", None)
                 return
+
+            _report(75, "解析專案啟動配置...")
 
             # 2. 解析 linkme.bat 或尋找 main.py / start.bat
             name = repo_name
@@ -214,9 +229,12 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
                 on_finished(False, "下載完成，但找不到標準啟動檔 (如 linkme.bat 或 main.py)", None)
                 return
 
+            _report(85, "正在檢查依賴環境...")
+
             # 3. 安裝 requirements.txt
             req_path = os.path.join(target_dir, "requirements.txt")
             if os.path.exists(req_path):
+                _report(90, "正在安裝依賴套件...")
                 pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
                 subprocess.run(
                     [pip_cmd, "-m", "pip", "install", "-r", req_path],
@@ -224,6 +242,8 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     timeout=180
                 )
+
+            _report(100, "安裝完成！")
 
             tool_entry = {
                 "name": name,
