@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "G:\python\toolLauncher\core\launcher_v2.py", line 715, in on_install_finished_slot
-    card.title_label.setText(tool_entry.get("name", card.title_label.text()))
-                                                    ^^^^^^^^^^^^^^^^^^^^^^^
-RuntimeError: libshiboken: Internal C++ object (StrongBodyLabel) already deleted.
