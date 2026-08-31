@@ -1,4 +1,11 @@
 import os, sys, json, subprocess, threading
+
+# Guard for pythonw (sys.stdout/stderr are None in GUI mode)
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
+
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -192,14 +199,6 @@ class AIToolLauncherV2(FluentWindow):
         if hasattr(self, "box_lobby"):
             self.box_lobby.update_icon_size(icon_size)
 
-        always_top = s.get("always_on_top", False)
-        flags = self.windowFlags()
-        if always_top:
-            self.setWindowFlags(flags | Qt.WindowStaysOnTopHint)
-        else:
-            self.setWindowFlags(flags & ~Qt.WindowStaysOnTopHint)
-        self.show()
-
     def launch_tool(self, tool_data: dict):
         name = tool_data.get("name", "小工具")
         exe = tool_data.get("executable", "")
@@ -240,13 +239,19 @@ class AIToolLauncherV2(FluentWindow):
 
 
 def main():
-    app = QApplication(sys.argv)
-    setTheme(Theme.AUTO)
-    setThemeColor("#9A70FF")
-    
-    window = AIToolLauncherV2()
-    window.show()
-    sys.exit(app.exec())
+    try:
+        app = QApplication(sys.argv)
+        setTheme(Theme.AUTO)
+        setThemeColor("#9A70FF")
+        
+        window = AIToolLauncherV2()
+        window.show()
+        sys.exit(app.exec())
+    except Exception as e:
+        import traceback
+        log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "launcher_error.log")
+        with open(log_path, "w", encoding="utf-8") as f:
+            traceback.print_exc(file=f)
 
 if __name__ == "__main__":
     main()
