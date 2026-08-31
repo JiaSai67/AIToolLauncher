@@ -88,7 +88,6 @@ def fetch_github_repos(callback):
                 raw_data = response.read().decode('utf-8', errors='ignore')
                 data = json.loads(raw_data)
 
-            # 過濾掉 launcher 本身
             repos = [r for r in data if r.get('name', '').lower() != 'aitoollauncher']
             if repos:
                 callback(True, repos)
@@ -99,7 +98,41 @@ def fetch_github_repos(callback):
 
     threading.Thread(target=_fetch, daemon=True).start()
 
-def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, on_status, on_finished):
+def get_cloud_icon_async(repo_name: str, cache_dir: str, on_icon_ready):
+    """
+    非同步獲取 GitHub 雲端專案的圖示並快取至本地
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    cached_file = os.path.join(cache_dir, f"{repo_name}.png")
+    if os.path.exists(cached_file) and os.path.getsize(cached_file) > 0:
+        on_icon_ready(cached_file)
+        return
+
+    candidate_raw_urls = [
+        f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/icon/mic.png",
+        f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/assets/icon.png",
+        f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/assets/icon.ico",
+        f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/resources/icon.png",
+        f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/icon.png"
+    ]
+
+    def _task():
+        for url in candidate_raw_urls:
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'AIToolLauncher-2.0'})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    content = resp.read()
+                    if len(content) > 0:
+                        with open(cached_file, "wb") as f:
+                            f.write(content)
+                        on_icon_ready(cached_file)
+                        return
+            except Exception:
+                continue
+
+    threading.Thread(target=_task, daemon=True).start()
+
+def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, on_finished):
     """
     下載並安裝雲端小工具 (git clone + linkme.bat 註冊 + pip 安裝)
     """
@@ -110,7 +143,6 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
         flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
 
         try:
-            on_status(f"⏳ 正在從 GitHub 下載 【{repo_name}】...")
             os.makedirs(cloud_tools_dir, exist_ok=True)
 
             if os.path.exists(target_dir):
@@ -123,17 +155,11 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding='utf-8', errors='replace'
             )
-            for line in p.stdout:
-                line_str = line.strip()
-                if line_str:
-                    on_status(f"📥 {line_str[:50]}")
-            p.wait()
+            p.wait(timeout=120)
 
             if p.returncode != 0:
                 on_finished(False, f"Git clone 失敗 (代碼: {p.returncode})", None)
                 return
-
-            on_status(f"🔍 正在解析 【{repo_name}】 設定與註冊資訊...")
 
             # 2. 解析 linkme.bat 或尋找 main.py / start.bat
             name = repo_name
@@ -161,12 +187,12 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
             # 3. 安裝 requirements.txt
             req_path = os.path.join(target_dir, "requirements.txt")
             if os.path.exists(req_path):
-                on_status(f"📦 正在為 【{name}】 補齊 Python 套件庫...")
                 pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
                 subprocess.run(
                     [pip_cmd, "-m", "pip", "install", "-r", req_path],
                     cwd=target_dir, creationflags=flags,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=180
                 )
 
             tool_entry = {
@@ -185,7 +211,7 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
 
     threading.Thread(target=_task, daemon=True).start()
 
-def reinstall_tool_async(tool_data: dict, python_exe: str, on_status, on_finished):
+def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished):
     """
     重新拉取與安裝已安裝的小工具 (git fetch + reset + linkme + pip)
     """
@@ -199,9 +225,8 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_status, on_finishe
             return
 
         try:
-            on_status(f"⏳ 正在重新拉取 【{name}】 最新程式碼...")
             # 1. git fetch origin
-            subprocess.run(["git", "fetch", "origin"], cwd=wdir, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["git", "fetch", "origin"], cwd=wdir, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
             
             # 2. git reset --hard origin/main
             p = subprocess.Popen(
@@ -210,20 +235,16 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_status, on_finishe
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding='utf-8', errors='replace'
             )
-            for line in p.stdout:
-                l = line.strip()
-                if l: on_status(f"🔄 {l[:50]}")
-            p.wait()
+            p.wait(timeout=30)
 
             if p.returncode != 0:
-                # fallback git pull
                 p2 = subprocess.Popen(
                     ["git", "pull"],
                     cwd=wdir, creationflags=flags,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding='utf-8', errors='replace'
                 )
-                p2.wait()
+                p2.wait(timeout=30)
 
             # 3. 重新解析 linkme.bat
             info = parse_linkme(wdir)
@@ -236,12 +257,12 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_status, on_finishe
             # 4. 檢查 requirements.txt
             req_path = os.path.join(wdir, "requirements.txt")
             if os.path.exists(req_path):
-                on_status(f"📦 正在檢查並更新 【{name}】 套件庫...")
                 pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
                 subprocess.run(
                     [pip_cmd, "-m", "pip", "install", "-r", req_path],
                     cwd=wdir, creationflags=flags,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=180
                 )
 
             send_identity_webhook(f"🔄 重新拉取小工具: {name}", f"工作目錄: {wdir}")
@@ -260,7 +281,6 @@ def uninstall_tool(tool_data: dict, cloud_tools_dir: str) -> bool:
     wdir = tool_data.get("working_dir", "")
     try:
         if wdir and os.path.exists(wdir):
-            # 若為雲端下載的專案，安全清除資料夾
             if os.path.abspath(wdir).startswith(os.path.abspath(cloud_tools_dir)):
                 shutil.rmtree(wdir, ignore_errors=True)
         return True

@@ -296,6 +296,9 @@ class AIToolLauncherV2(MSFluentWindow):
     """
     AIToolLauncher 2.0 主視窗 (原生 Acrylic 壓克力圓角收納盒大廳)
     """
+    installFinished = Signal(bool, str, dict)
+    reinstallFinished = Signal(bool, str, dict)
+
     def __init__(self):
         super().__init__()
         base_root = os.path.dirname(os.path.dirname(__file__))
@@ -304,6 +307,9 @@ class AIToolLauncherV2(MSFluentWindow):
         self.registry_file = os.path.join(self.config_dir, "registry.json")
         self.settings_file = os.path.join(self.config_dir, "v2_settings.json")
         self.registry = self.load_registry()
+
+        self.installFinished.connect(self.on_install_finished_slot)
+        self.reinstallFinished.connect(self.on_reinstall_finished_slot)
 
         self.init_settings()
         self.init_window()
@@ -533,37 +539,37 @@ class AIToolLauncherV2(MSFluentWindow):
             parent=self
         )
 
-        def on_status(msg):
-            pass
+        def _on_finished(success, msg, tool_entry):
+            self.installFinished.emit(success, msg, tool_entry or {})
 
-        def on_finished(success, msg, tool_entry):
-            if success and tool_entry:
-                self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != tool_entry["name"]]
-                self.registry.setdefault("tools", []).append(tool_entry)
-                self.save_registry()
+        install_cloud_repo_async(repo_data, self.cloud_tools_dir, sys.executable, _on_finished)
 
-                InfoBar.success(
-                    title="🎉 安裝完成",
-                    content=msg,
-                    orient=Qt.Horizontal,
-                    isClosable=True,
-                    position=InfoBarPosition.TOP,
-                    duration=4000,
-                    parent=self
-                )
-                self.box_lobby.refresh_all()
-            else:
-                InfoBar.error(
-                    title="❌ 安裝失敗",
-                    content=msg,
-                    orient=Qt.Horizontal,
-                    isClosable=True,
-                    position=InfoBarPosition.TOP,
-                    duration=5000,
-                    parent=self
-                )
+    def on_install_finished_slot(self, success: bool, msg: str, tool_entry: dict):
+        if success and tool_entry:
+            self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != tool_entry.get("name")]
+            self.registry.setdefault("tools", []).append(tool_entry)
+            self.save_registry()
 
-        install_cloud_repo_async(repo_data, self.cloud_tools_dir, sys.executable, on_status, on_finished)
+            InfoBar.success(
+                title="🎉 安裝完成",
+                content=msg,
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=4000,
+                parent=self
+            )
+            self.box_lobby.refresh_all()
+        else:
+            InfoBar.error(
+                title="❌ 安裝失敗",
+                content=msg,
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=5000,
+                parent=self
+            )
 
     def reinstall_tool(self, tool_data: dict):
         name = tool_data.get("name", "小工具")
@@ -577,34 +583,34 @@ class AIToolLauncherV2(MSFluentWindow):
             parent=self
         )
 
-        def on_status(msg):
-            pass
+        def _on_finished(success, msg, updated_tool):
+            self.reinstallFinished.emit(success, msg, updated_tool or {})
 
-        def on_finished(success, msg, updated_tool):
-            if success:
-                self.save_registry()
-                InfoBar.success(
-                    title="🟢 更新完成",
-                    content=msg,
-                    orient=Qt.Horizontal,
-                    isClosable=True,
-                    position=InfoBarPosition.TOP,
-                    duration=3500,
-                    parent=self
-                )
-                self.box_lobby.refresh_all()
-            else:
-                InfoBar.error(
-                    title="❌ 更新失敗",
-                    content=msg,
-                    orient=Qt.Horizontal,
-                    isClosable=True,
-                    position=InfoBarPosition.TOP,
-                    duration=4500,
-                    parent=self
-                )
+        reinstall_tool_async(tool_data, sys.executable, _on_finished)
 
-        reinstall_tool_async(tool_data, sys.executable, on_status, on_finished)
+    def on_reinstall_finished_slot(self, success: bool, msg: str, updated_tool: dict):
+        if success:
+            self.save_registry()
+            InfoBar.success(
+                title="🟢 更新完成",
+                content=msg,
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3500,
+                parent=self
+            )
+            self.box_lobby.refresh_all()
+        else:
+            InfoBar.error(
+                title="❌ 更新失敗",
+                content=msg,
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=4500,
+                parent=self
+            )
 
     def uninstall_tool(self, tool_data: dict):
         name = tool_data.get("name", "小工具")

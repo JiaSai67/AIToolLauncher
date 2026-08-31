@@ -1,5 +1,5 @@
 import os, sys, subprocess, webbrowser
-from PySide6.QtCore import Qt, Signal, QRectF, QSize
+from PySide6.QtCore import Qt, Signal, QRectF, QSize, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSizePolicy
@@ -8,6 +8,11 @@ from qfluentwidgets import (
     CardWidget, SimpleCardWidget, StrongBodyLabel, CaptionLabel,
     FluentIcon, RoundMenu, Action, ToolTipFilter, ToolTipPosition
 )
+
+try:
+    from core.cloud_manager import get_cloud_icon_async
+except ModuleNotFoundError:
+    from cloud_manager import get_cloud_icon_async
 
 def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.22) -> QPixmap:
     """
@@ -40,12 +45,13 @@ def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.2
 
 class ToolCardWidget(CardWidget):
     """
-    小工具磁貼卡片 (支援「已安裝」與「未安裝/雲端」模式，右鍵全功能選單)
+    小工具磁貼卡片 (支援「已安裝」與「未安裝/雲端」模式，右鍵全功能選單，雲端圖標非同步載入)
     """
     toolClicked = Signal(dict, bool)         # (tool_data, is_installed)
     installRequested = Signal(dict)          # (repo_data)
     reinstallRequested = Signal(dict)        # (tool_data)
     uninstallRequested = Signal(dict)        # (tool_data)
+    cloudIconLoaded = Signal(str)            # (cached_icon_path)
 
     def __init__(self, data: dict, is_installed: bool = True, icon_size: int = 56, parent=None):
         super().__init__(parent)
@@ -53,6 +59,7 @@ class ToolCardWidget(CardWidget):
         self.is_installed = is_installed
         self.icon_size = icon_size
         self.setCursor(Qt.PointingHandCursor)
+        self.cloudIconLoaded.connect(self.on_cloud_icon_ready)
         self.init_ui()
 
     def init_ui(self):
@@ -71,6 +78,12 @@ class ToolCardWidget(CardWidget):
         self.icon_label.setStyleSheet("background: transparent; border: none;")
         self.update_icon()
         self.layout.addWidget(self.icon_label)
+
+        # 若為未安裝的雲端專案，非同步嘗試載入 GitHub 上的真實圖示
+        if not self.is_installed:
+            repo_name = self.data.get("name", "")
+            cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "cache", "icons")
+            get_cloud_icon_async(repo_name, cache_dir, lambda p: self.cloudIconLoaded.emit(p))
 
         # 2. 名稱
         name = self.data.get("name", "未命名工具")
@@ -98,6 +111,12 @@ class ToolCardWidget(CardWidget):
 
         self.installEventFilter(ToolTipFilter(self, showDelay=250, position=ToolTipPosition.BOTTOM))
 
+    def on_cloud_icon_ready(self, icon_path: str):
+        if os.path.exists(icon_path):
+            raw_pixmap = QPixmap(icon_path)
+            rounded = get_rounded_pixmap(raw_pixmap, self.icon_size)
+            self.icon_label.setPixmap(rounded)
+
     def update_icon(self):
         raw_pixmap = self.get_tool_raw_pixmap()
         rounded_pixmap = get_rounded_pixmap(raw_pixmap, self.icon_size)
@@ -108,8 +127,9 @@ class ToolCardWidget(CardWidget):
         if self.is_installed:
             working_dir = self.data.get("working_dir", "")
             candidate_paths = [
-                os.path.join(working_dir, "resources", "icon.png"),
                 os.path.join(working_dir, "assets", "icon.png"),
+                os.path.join(working_dir, "icon", "mic.png"),
+                os.path.join(working_dir, "resources", "icon.png"),
                 os.path.join(working_dir, "assets", "icon.ico"),
                 os.path.join(working_dir, "icon.png"),
                 os.path.join(working_dir, "app.ico"),
@@ -118,6 +138,13 @@ class ToolCardWidget(CardWidget):
             for p in candidate_paths:
                 if os.path.exists(p):
                     return QPixmap(p)
+        else:
+            # 檢查是否有快取的雲端圖示
+            repo_name = self.data.get("name", "")
+            cached_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "cache", "icons", f"{repo_name}.png")
+            if os.path.exists(cached_file):
+                return QPixmap(cached_file)
+
         return QPixmap(default_icon)
 
     def set_icon_size(self, size: int):
