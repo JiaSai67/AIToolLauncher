@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "<string>", line 29, in <module>
-  File "G:\python\toolLauncher\core\tool_box_widget.py", line 247, in apply_state
-    self.setStyleSheet("""
-RuntimeError: libshiboken: Internal C++ object (ToolCardWidget) already deleted.
