@@ -1,4 +1,4 @@
-import os, sys, json, subprocess, threading
+import os, sys, json, subprocess, threading, ctypes
 
 # Guard for pythonw (sys.stdout/stderr are None in GUI mode)
 if sys.stdout is None:
@@ -13,9 +13,9 @@ from PySide6.QtWidgets import (
     QScrollArea, QFrame, QSizePolicy
 )
 from qfluentwidgets import (
-    FluentWindow, NavigationItemPosition, FluentIcon, SearchLineEdit,
+    MSFluentWindow, NavigationItemPosition, FluentIcon, SearchLineEdit,
     SubtitleLabel, CaptionLabel, InfoBar, InfoBarPosition, setTheme,
-    Theme, setThemeColor, CardWidget, BodyLabel, TransparentToolButton
+    Theme, setThemeColor, CardWidget, BodyLabel
 )
 
 # Relative imports
@@ -31,9 +31,26 @@ except ModuleNotFoundError:
 VERSION = "2.0.2"
 
 
+def set_native_topmost(win_id: int, is_topmost: bool):
+    """
+    使用 Windows 原生 Win32 API 設置視窗置頂，絕不觸發 Qt 重建視窗
+    """
+    try:
+        HWND_TOPMOST = -1
+        HWND_NOTOPMOST = -2
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_SHOWWINDOW = 0x0040
+        flags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+        target = HWND_TOPMOST if is_topmost else HWND_NOTOPMOST
+        ctypes.windll.user32.SetWindowPos(int(win_id), target, 0, 0, 0, 0, flags)
+    except Exception:
+        pass
+
+
 class BoxLobbyInterface(QWidget):
     """
-    收納盒大廳主頁面 (全圖示平鋪網格，無繁複分類)
+    收納盒大廳主頁面 (全圖示平鋪網格)
     """
     def __init__(self, parent_window, parent=None):
         super().__init__(parent)
@@ -84,7 +101,6 @@ class BoxLobbyInterface(QWidget):
         self.load_and_render_tools()
 
     def load_and_render_tools(self, filter_text: str = ""):
-        # Clear existing cards
         for c in self.card_widgets:
             c.deleteLater()
         self.card_widgets.clear()
@@ -112,7 +128,6 @@ class BoxLobbyInterface(QWidget):
             self.card_widgets.append(empty_card)
             return
 
-        # Render in a clean responsive grid (5 columns)
         cols = 5
         for idx, tool in enumerate(matched_tools):
             row = idx // cols
@@ -131,9 +146,9 @@ class BoxLobbyInterface(QWidget):
                 card.set_icon_size(size)
 
 
-class AIToolLauncherV2(FluentWindow):
+class AIToolLauncherV2(MSFluentWindow):
     """
-    AIToolLauncher 2.0 主視窗 (Acrylic 圓角圖示收納盒大廳)
+    AIToolLauncher 2.0 主視窗 (原生 Acrylic 壓克力圓角收納盒大廳)
     """
     def __init__(self):
         super().__init__()
@@ -166,10 +181,10 @@ class AIToolLauncherV2(FluentWindow):
     def init_navigation(self):
         # 1. 收納盒大廳
         self.box_lobby = BoxLobbyInterface(self, self)
-        self.addSubInterface(self.box_lobby, FluentIcon.FOLDER, "收納盒大廳", NavigationItemPosition.TOP)
+        self.addSubInterface(self.box_lobby, FluentIcon.FOLDER, "收納盒大廳", position=NavigationItemPosition.TOP)
 
         # 2. 個性化設定
-        self.addSubInterface(self.settings_panel, FluentIcon.SETTING, "個性化設置", NavigationItemPosition.BOTTOM)
+        self.addSubInterface(self.settings_panel, FluentIcon.SETTING, "個性化設置", position=NavigationItemPosition.BOTTOM)
 
     def load_tools(self) -> list:
         if os.path.exists(self.registry_file):
@@ -184,12 +199,18 @@ class AIToolLauncherV2(FluentWindow):
     def apply_live_settings(self, s: dict):
         self.settings = s
 
+        # 1. 窗口透明度
         opacity = s.get("window_opacity", 95) / 100.0
         self.setWindowOpacity(opacity)
 
+        # 2. 圖標大小
         icon_size = s.get("icon_size", 56)
         if hasattr(self, "box_lobby"):
             self.box_lobby.update_icon_size(icon_size)
+
+        # 3. 視窗置頂 (使用 Win32 API 原生即時生效)
+        always_top = s.get("always_on_top", False)
+        set_native_topmost(self.winId(), always_top)
 
     def launch_tool(self, tool_data: dict):
         name = tool_data.get("name", "小工具")

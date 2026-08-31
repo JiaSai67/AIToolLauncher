@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     SubtitleLabel, BodyLabel, CaptionLabel, StrongBodyLabel,
-    Slider, SwitchButton, RadioButton, CheckBox, CardWidget,
+    Slider, RadioButton, CheckBox, CardWidget,
     setTheme, Theme
 )
 
@@ -22,8 +22,7 @@ class SettingsPanel(QWidget):
     def load_settings(self) -> dict:
         default_settings = {
             "window_opacity": 95,
-            "acrylic_blur": True,
-            "icon_size": 52,
+            "icon_size": 56,
             "theme_mode": "Auto",
             "always_on_top": False
         }
@@ -46,13 +45,13 @@ class SettingsPanel(QWidget):
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(24, 20, 24, 20)
-        main_layout.setSpacing(16)
+        main_layout.setContentsMargins(28, 24, 28, 24)
+        main_layout.setSpacing(18)
 
         # Title
         title_box = QVBoxLayout()
-        title = SubtitleLabel("🎨 視覺與個性化設置 (Personalization)", self)
-        subtitle = CaptionLabel("即時自訂收納盒的壓克力磨砂質感、透明度、圖示大小與系統主題", self)
+        title = SubtitleLabel("🎨 個性化設置 (Settings)", self)
+        subtitle = CaptionLabel("即時調節視窗透明度、圖示尺寸、外觀主題與視窗置頂行為", self)
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
         main_layout.addLayout(title_box)
@@ -72,7 +71,7 @@ class SettingsPanel(QWidget):
         # 1. 窗口透明度 Card
         self.opacity_card = self.create_slider_card(
             title="窗口透明度 (Window Opacity)",
-            desc="調節整個收納盒大廳的視窗透明程度",
+            desc="調節整個收納盒大廳的視窗半透明程度（即時響應）",
             min_val=30, max_val=100,
             cur_val=self.settings.get("window_opacity", 95),
             unit="%",
@@ -83,28 +82,19 @@ class SettingsPanel(QWidget):
         # 2. 圖標大小 Card
         self.icon_card = self.create_slider_card(
             title="圖標大小 (Icon Scale)",
-            desc="動態縮放收納盒中所有工具卡片的圖示與磁貼尺寸",
+            desc="動態縮放收納盒中所有圓角卡片與圖示的尺寸",
             min_val=36, max_val=80,
-            cur_val=self.settings.get("icon_size", 52),
+            cur_val=self.settings.get("icon_size", 56),
             unit=" px",
             on_change=self.on_icon_size_changed
         )
         c_layout.addWidget(self.icon_card)
 
-        # 3. 磨砂玻璃特效 Card
-        self.acrylic_card = self.create_switch_card(
-            title="磨砂玻璃效果 (Acrylic / Mica Blur)",
-            desc="啟用 Windows 原生壓克力高質感毛玻璃背景襯底",
-            checked=self.settings.get("acrylic_blur", True),
-            on_change=self.on_acrylic_changed
-        )
-        c_layout.addWidget(self.acrylic_card)
-
-        # 4. 外觀主題 Card (跟隨系統 / 淺色 / 深色)
+        # 3. 外觀主題 Card (跟隨系統 / 淺色 / 深色)
         self.theme_card = self.create_theme_card()
         c_layout.addWidget(self.theme_card)
 
-        # 5. 視窗行為 Card (置頂)
+        # 4. 視窗置頂 Card
         self.behavior_card = self.create_behavior_card()
         c_layout.addWidget(self.behavior_card)
 
@@ -138,26 +128,6 @@ class SettingsPanel(QWidget):
 
         return card
 
-    def create_switch_card(self, title: str, desc: str, checked: bool, on_change):
-        card = CardWidget(self)
-        layout = QHBoxLayout(card)
-        layout.setContentsMargins(18, 14, 18, 14)
-
-        vbox = QVBoxLayout()
-        t_label = StrongBodyLabel(title, card)
-        d_label = CaptionLabel(desc, card)
-        vbox.addWidget(t_label)
-        vbox.addWidget(d_label)
-        layout.addLayout(vbox)
-        layout.addStretch(1)
-
-        switch = SwitchButton(card)
-        switch.setChecked(checked)
-        switch.checkedChanged.connect(on_change)
-        layout.addWidget(switch)
-
-        return card
-
     def create_theme_card(self):
         card = CardWidget(self)
         layout = QVBoxLayout(card)
@@ -165,7 +135,7 @@ class SettingsPanel(QWidget):
         layout.setSpacing(12)
 
         t_label = StrongBodyLabel("外觀主題 (Appearance Theme)", card)
-        d_label = CaptionLabel("切換收納盒大廳的色彩模式（支援微軟 Fluent 深淺模式自動適配）", card)
+        d_label = CaptionLabel("切換收納盒大廳的色彩風格（支援 Fluent 深淺模式自動適配）", card)
         layout.addWidget(t_label)
         layout.addWidget(d_label)
 
@@ -207,10 +177,12 @@ class SettingsPanel(QWidget):
         layout.setContentsMargins(18, 14, 18, 14)
         layout.setSpacing(10)
 
-        t_label = StrongBodyLabel("視窗置頂與行為 (Window Behavior)", card)
+        t_label = StrongBodyLabel("視窗置頂 (Always on Top)", card)
+        d_label = CaptionLabel("勾選後收納盒將保持在所有應用程式視窗的最上層顯示", card)
         layout.addWidget(t_label)
+        layout.addWidget(d_label)
 
-        self.chk_top = CheckBox("📌 保持收納盒視窗最上層顯示 (Always on Top)", card)
+        self.chk_top = CheckBox("📌 保持收納盒視窗最上層顯示", card)
         self.chk_top.setChecked(self.settings.get("always_on_top", False))
         self.chk_top.stateChanged.connect(self.on_top_changed)
         layout.addWidget(self.chk_top)
@@ -224,11 +196,6 @@ class SettingsPanel(QWidget):
 
     def on_icon_size_changed(self, val: int):
         self.settings["icon_size"] = val
-        self.save_settings()
-        self.settingsChanged.emit(self.settings)
-
-    def on_acrylic_changed(self, checked: bool):
-        self.settings["acrylic_blur"] = checked
         self.save_settings()
         self.settingsChanged.emit(self.settings)
 
