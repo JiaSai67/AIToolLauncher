@@ -1,5 +1,13 @@
 import os, sys, json, subprocess, threading, ctypes, re
 
+# 註冊專屬 Windows AppUserModelID (解除 IDLE 綁定並在工作列顯示專屬圖標)
+if sys.platform == "win32":
+    try:
+        myappid = "jiasai.aitoollauncher.v2.desktop"
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
+
 # Guard for pythonw (sys.stdout/stderr are None in GUI mode)
 if sys.stdout is None:
     sys.stdout = open(os.devnull, "w")
@@ -630,11 +638,27 @@ class AIToolLauncherV2(MSFluentWindow):
 
 def main():
     try:
+        if sys.platform == "win32":
+            try:
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("jiasai.aitoollauncher.v2.desktop")
+            except Exception:
+                pass
+
         app = QApplication(sys.argv)
+        app.setApplicationName("AIToolLauncher")
+        app.setApplicationDisplayName("AI Tool Launcher 2.0")
+
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.png")
+        if os.path.exists(icon_path):
+            app.setWindowIcon(QIcon(icon_path))
+
         setTheme(Theme.AUTO)
         setThemeColor("#9A70FF")
         
         window = AIToolLauncherV2()
+        if os.path.exists(icon_path):
+            window.setWindowIcon(QIcon(icon_path))
+            
         window.show()
         sys.exit(app.exec())
     except Exception as e:
