@@ -1089,10 +1089,27 @@ class AIToolLauncherV2(MSFluentWindow):
 
     def on_install_finished_slot(self, success: bool, msg: str, tool_entry: dict, repo_name: str):
         if success and tool_entry:
-            self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != tool_entry.get("name")]
+            t_name = tool_entry.get("name", repo_name)
+            self.registry["tools"] = [
+                t for t in self.registry.get("tools", [])
+                if t.get("name") not in (t_name, repo_name)
+                and t.get("repo_name", "") not in (t_name, repo_name)
+            ]
             self.registry.setdefault("tools", []).append(tool_entry)
             self.save_registry()
+
+            # 立即就地重新渲染 (0ms，極速無卡頓，不觸發多餘網路請求)
             self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
+
+            InfoBar.success(
+                title="🎉 安裝成功",
+                content=f"【{t_name}】已成功安裝並加入收納盒！",
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3500,
+                parent=self
+            )
         else:
             self.set_all_cards_state(repo_name, ToolCardWidget.STATE_ERROR)
             InfoBar.error(
@@ -1126,7 +1143,16 @@ class AIToolLauncherV2(MSFluentWindow):
     def on_reinstall_finished_slot(self, success: bool, msg: str, updated_tool: dict):
         if success:
             self.save_registry()
-            self.box_lobby.refresh_all(show_prompt=False)
+            self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
+            InfoBar.success(
+                title="🎉 更新成功",
+                content=f"【{updated_tool.get('name', '小工具')}】已完成同步更新！",
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self
+            )
         else:
             InfoBar.error(
                 title="❌ 更新失敗",
@@ -1139,23 +1165,50 @@ class AIToolLauncherV2(MSFluentWindow):
             )
 
     def uninstall_tool(self, tool_data: dict):
-        name = tool_data.get("name", "小工具")
+        name = tool_data.get("name", "")
+        repo_name = tool_data.get("repo_name", "")
+        wdir = tool_data.get("working_dir", "")
         
+        display_name = name or repo_name or "小工具"
         w = MessageBox(
-            f"🗑️ 確認移除 【{name}】",
-            f"您確定要將 【{name}】 從收納盒中解除安裝嗎？\n\n若是雲端專案，將同時清除其本機資料夾，並重置為「未安裝」狀態。",
+            f"🗑️ 確認移除 【{display_name}】",
+            f"您確定要將 【{display_name}】 從收納盒中解除安裝嗎？\n\n若是雲端專案，將同時清除其本機資料夾，並重置為「未安裝」狀態。",
             self
         )
         if not w.exec():
             return
 
-        def _task():
-            uninstall_tool(tool_data, self.cloud_tools_dir)
-            self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != name]
-            self.save_registry()
-            QTimer.singleShot(0, lambda: self.box_lobby.refresh_all(show_prompt=False))
+        # 1. 主線程立即同步更新記憶體註冊表 (0ms 無延遲，無競爭條件)
+        self.registry["tools"] = [
+            t for t in self.registry.get("tools", [])
+            if t.get("name") not in (name, repo_name)
+            and t.get("repo_name", "") not in (name, repo_name)
+            and (not wdir or t.get("working_dir") != wdir)
+        ]
+        favs = self.registry.setdefault("favorites", [])
+        if name in favs:
+            favs.remove(name)
+        if repo_name and repo_name in favs:
+            favs.remove(repo_name)
 
-        threading.Thread(target=_task, daemon=True).start()
+        self.save_registry()
+
+        # 2. 立即就地重新渲染小卡清單 (0ms，極速無卡頓，不觸發多餘網路請求)
+        self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
+
+        # 3. 在背景線程靜默清理本機檔案資料夾 (完全不阻塞 UI 主線程)
+        if wdir and os.path.exists(wdir) and os.path.abspath(wdir).startswith(os.path.abspath(self.cloud_tools_dir)):
+            threading.Thread(target=lambda: force_remove_directory(wdir), daemon=True).start()
+
+        InfoBar.success(
+            title="🗑️ 已移除小工具",
+            content=f"已成功解除安裝 【{display_name}】",
+            orient=Qt.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=2500,
+            parent=self
+        )
 
 
 def main():
