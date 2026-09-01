@@ -46,7 +46,7 @@ def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.2
 
 class InnerCard(CardWidget):
     """
-    純淨內部小卡，僅包含圖示與標題，絕無多餘預留空白
+    純淨內部小卡，僅包含圖示與標題，尺寸固定絕無多餘預留空白
     """
     def __init__(self, parent_wrapper):
         super().__init__(parent_wrapper)
@@ -76,9 +76,9 @@ class ToolCardWidget(QWidget):
     """
     小工具磁貼卡片
     特點：
-    1. 卡片本體緊湊精準 (僅含圖標 + 標題，不預留多餘空白)。
-    2. 運行中/安裝中等狀態字樣顯示在「卡片外面」下方，清晰不推擠。
-    3. 全域響應右鍵事件與極速收藏切換。
+    1. 卡片佈局尺寸永遠恆定 (Zero Layout Shift)，切換狀態絕不推擠相鄰卡片。
+    2. 運行中/安裝中等狀態膠囊浮動疊加於卡片底緣間距 (Overlay Chip)，精美自然。
+    3. 全域響應右鍵選單與極速秒級收藏切換。
     """
     toolClicked = Signal(dict, bool)           # (tool_data, is_installed)
     installRequested = Signal(dict)            # (repo_data)
@@ -108,15 +108,12 @@ class ToolCardWidget(QWidget):
         card_w = max(112, self.icon_size + 48)
         card_h = max(104, self.icon_size + 48)
 
-        self.setFixedWidth(card_w)
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.setSpacing(4)
-        self.main_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        # 鎖定 Widget 恆定固定尺寸，確保 FlowLayout 零推擠
+        self.setFixedSize(card_w, card_h)
 
-        # 1. 內部卡片本體 (僅容納圖標 + 標題，完美比例)
+        # 1. 內部卡片本體 (填滿整個區域，比例完美)
         self.card = InnerCard(self)
-        self.card.setFixedSize(card_w, card_h)
+        self.card.setGeometry(0, 0, card_w, card_h)
 
         self.card_layout = QVBoxLayout(self.card)
         self.card_layout.setContentsMargins(4, 8, 4, 6)
@@ -147,13 +144,11 @@ class ToolCardWidget(QWidget):
         self.title_label.setStyleSheet("font-size: 12px; line-height: 1.2;")
         self.card_layout.addWidget(self.title_label, 0, Qt.AlignCenter)
 
-        self.main_layout.addWidget(self.card, 0, Qt.AlignCenter)
-
-        # 2. 外部狀態標籤 (顯示在卡片外側下方，絕不佔用內部空間)
+        # 2. 浮動狀態膠囊標籤 (直接疊加於底緣間距，不參與佈局擠壓)
         self.status_badge = CaptionLabel("", self)
         self.status_badge.setAlignment(Qt.AlignCenter)
         self.status_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.main_layout.addWidget(self.status_badge, 0, Qt.AlignCenter)
+        self.status_badge.raise_()
 
         # 初始狀態樣式
         self.apply_state(self.STATE_IDLE)
@@ -161,6 +156,16 @@ class ToolCardWidget(QWidget):
         # 3. ToolTip
         self.update_tooltip()
         self.card.installEventFilter(ToolTipFilter(self.card, showDelay=250, position=ToolTipPosition.BOTTOM))
+
+    def _reposition_badge(self):
+        """
+        將狀態膠囊置中疊加在卡片底緣間距上
+        """
+        self.status_badge.adjustSize()
+        bw = max(68, self.status_badge.sizeHint().width() + 14)
+        bh = 20
+        self.status_badge.setGeometry((self.width() - bw) // 2, self.height() - 11, bw, bh)
+        self.status_badge.raise_()
 
     def update_tooltip(self):
         name = self.data.get("name", "未命名工具")
@@ -180,55 +185,82 @@ class ToolCardWidget(QWidget):
 
     def apply_state(self, state: str):
         """
-        切換並套用卡片與外部狀態標籤外觀
+        切換並套用卡片與浮動狀態標籤外觀 (零排版推擠)
         """
         self.current_state = state
 
         if state == self.STATE_INSTALLING:
-            # 📥 安裝中 (偏黑卡片 + 藍色虛線框 + 卡片外部進度膠囊)
+            # 📥 安裝中 (偏黑卡片 + 藍色虛線框 + 底部浮動進度膠囊)
             self.card.setStyleSheet("""
                 CardWidget {
                     background-color: rgba(18, 18, 20, 0.85);
-                    border: 1.5px dashed rgba(96, 205, 255, 0.7);
+                    border: 1.5px dashed rgba(96, 205, 255, 0.8);
                     border-radius: 8px;
                 }
             """)
             self.status_badge.setText(f"📥 安裝中 {self.install_progress}%")
-            self.status_badge.setStyleSheet("color: #60CDFF; font-size: 11px; font-weight: bold; background: rgba(96, 205, 255, 0.18); border-radius: 4px; padding: 2px 8px;")
+            self.status_badge.setStyleSheet("""
+                color: #60CDFF;
+                font-size: 10px;
+                font-weight: bold;
+                background: rgba(18, 32, 54, 0.95);
+                border: 1px solid #60CDFF;
+                border-radius: 10px;
+                padding: 1px 6px;
+            """)
+            self._reposition_badge()
             self.status_badge.show()
 
         elif state == self.STATE_RUNNING:
-            # 🟢 已開啟 (翡翠綠邊框 + 卡片外部運行中膠囊標籤)
+            # 🟢 已開啟 (翡翠綠邊框 + 底部浮動運行中膠囊標籤)
             self.card.setStyleSheet("""
                 CardWidget {
-                    background-color: rgba(16, 185, 129, 0.14);
+                    background-color: rgba(16, 185, 129, 0.15);
                     border: 2px solid #10B981;
                     border-radius: 8px;
                 }
                 CardWidget:hover {
-                    background-color: rgba(16, 185, 129, 0.22);
+                    background-color: rgba(16, 185, 129, 0.24);
                     border: 2px solid #34D399;
                 }
             """)
             self.status_badge.setText("🟢 運行中")
-            self.status_badge.setStyleSheet("color: #34D399; font-size: 11px; font-weight: bold; background: rgba(16, 185, 129, 0.2); border-radius: 4px; padding: 2px 8px;")
+            self.status_badge.setStyleSheet("""
+                color: #34D399;
+                font-size: 10px;
+                font-weight: bold;
+                background: rgba(10, 36, 24, 0.95);
+                border: 1px solid #10B981;
+                border-radius: 10px;
+                padding: 1px 6px;
+            """)
+            self._reposition_badge()
             self.status_badge.show()
 
         elif state == self.STATE_ERROR:
-            # 🔴 錯誤 (緋紅邊框 + 卡片外部錯誤膠囊)
+            # 🔴 錯誤 (緋紅邊框 + 底部浮動錯誤膠囊)
             self.card.setStyleSheet("""
                 CardWidget {
-                    background-color: rgba(239, 68, 68, 0.14);
+                    background-color: rgba(239, 68, 68, 0.15);
                     border: 2px solid #EF4444;
                     border-radius: 8px;
                 }
                 CardWidget:hover {
-                    background-color: rgba(239, 68, 68, 0.22);
+                    background-color: rgba(239, 68, 68, 0.24);
                     border: 2px solid #F87171;
                 }
             """)
             self.status_badge.setText("🔴 啟動錯誤")
-            self.status_badge.setStyleSheet("color: #F87171; font-size: 11px; font-weight: bold; background: rgba(239, 68, 68, 0.2); border-radius: 4px; padding: 2px 8px;")
+            self.status_badge.setStyleSheet("""
+                color: #F87171;
+                font-size: 10px;
+                font-weight: bold;
+                background: rgba(45, 15, 15, 0.95);
+                border: 1px solid #EF4444;
+                border-radius: 10px;
+                padding: 1px 6px;
+            """)
+            self._reposition_badge()
             self.status_badge.show()
 
         else:
@@ -246,7 +278,16 @@ class ToolCardWidget(QWidget):
             """)
             if not self.is_installed:
                 self.status_badge.setText("☁️ 點擊安裝")
-                self.status_badge.setStyleSheet("color: #9A70FF; font-size: 11px; font-weight: bold; background: rgba(154, 112, 255, 0.15); border-radius: 4px; padding: 2px 8px;")
+                self.status_badge.setStyleSheet("""
+                    color: #D8B4FE;
+                    font-size: 10px;
+                    font-weight: bold;
+                    background: rgba(35, 18, 50, 0.95);
+                    border: 1px solid #9A70FF;
+                    border-radius: 10px;
+                    padding: 1px 6px;
+                """)
+                self._reposition_badge()
                 self.status_badge.show()
             else:
                 self.status_badge.setText("")
@@ -256,7 +297,7 @@ class ToolCardWidget(QWidget):
 
     def set_install_progress(self, progress: int, status_text: str = ""):
         """
-        更新安裝進度文字 (顯示在外部)
+        更新安裝進度文字 (浮動疊加顯示，零推擠)
         """
         self.install_progress = max(0, min(100, progress))
         if self.current_state != self.STATE_INSTALLING:
@@ -265,6 +306,7 @@ class ToolCardWidget(QWidget):
 
         text = status_text or f"📥 安裝中 {self.install_progress}%"
         self.status_badge.setText(text)
+        self._reposition_badge()
         self.status_badge.show()
 
     def on_cloud_icon_ready(self, icon_path: str):
@@ -332,10 +374,11 @@ class ToolCardWidget(QWidget):
         self.icon_size = size
         card_w = max(112, self.icon_size + 48)
         card_h = max(104, self.icon_size + 48)
-        self.setFixedWidth(card_w)
-        self.card.setFixedSize(card_w, card_h)
+        self.setFixedSize(card_w, card_h)
+        self.card.setGeometry(0, 0, card_w, card_h)
         self.icon_label.setFixedSize(self.icon_size, self.icon_size)
         self.title_label.setFixedSize(card_w - 8, 34)
+        self._reposition_badge()
         self.update_icon()
 
     def show_context_menu(self, pos: QPoint):
