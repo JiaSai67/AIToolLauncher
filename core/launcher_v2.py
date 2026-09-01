@@ -525,28 +525,34 @@ class AIToolLauncherV2(MSFluentWindow):
         threading.Thread(target=lambda: send_identity_webhook("🚀 啟動 AIToolLauncher 2.0 (收納盒模式)", "使用者已成功開啟 AIToolLauncher 2.0 大廳。"), daemon=True).start()
 
     def paintEvent(self, event):
-        # 1. 繪製自訂背景圖片 (Cover 滿版適配，保持比例置中裁剪)
-        if self.background_pixmap and not self.background_pixmap.isNull():
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
+        if self.background_pixmap and not self.background_pixmap.isNull():
             w, h = self.width(), self.height()
             scaled = self.background_pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
             sx = (w - scaled.width()) // 2
             sy = (h - scaled.height()) // 2
 
+            # 1. 繪製深色/淺色底色基底 (避免自訂圖片透明通道透出桌面)
+            is_dark = (self.settings.get("theme_mode", "Auto") != "Light")
+            base_bg = QColor(18, 18, 22) if is_dark else QColor(240, 240, 245)
+            painter.fillRect(self.rect(), base_bg)
+
+            # 2. 繪製自訂背景桌布 (依照 background_opacity 顯色濃度)
             painter.setOpacity(self.background_opacity)
             painter.drawPixmap(sx, sy, scaled)
 
-            # 2. 疊加現代感磨砂暗色/亮色壓克力層 (Frosted Acrylic Tint)，確保文字與卡片維持最高可讀性
-            painter.setOpacity(1.0)
-            is_dark = (self.settings.get("theme_mode", "Auto") != "Light")
-            tint = QColor(15, 15, 20, 135) if is_dark else QColor(250, 250, 252, 135)
+            # 3. 疊加現代感磨砂壓克力透光層 (Dark: 20% 黑, Light: 20% 白，維持字體高清晰度)
+            painter.setOpacity(0.20)
+            tint = QColor(10, 10, 14) if is_dark else QColor(255, 255, 255)
             painter.fillRect(self.rect(), tint)
-            painter.end()
+        else:
+            # 未自訂背景圖片時，使用 Fluent 預設原生背景
+            painter.fillRect(self.rect(), self.backgroundColor)
 
-        super().paintEvent(event)
+        painter.end()
 
     def init_settings(self):
         self.settings_panel = SettingsPanel(self.settings_file, self)
@@ -662,6 +668,11 @@ class AIToolLauncherV2(MSFluentWindow):
 
         # 2. 個性化設定
         self.addSubInterface(self.settings_panel, FluentIcon.SETTING, "個性化設置", position=NavigationItemPosition.BOTTOM)
+
+        # 3. 確保 StackedWidget 與 NavigationInterface 在自訂背景模式下完全透明
+        self.stackedWidget.setProperty("isTransparent", True)
+        self.stackedWidget.setStyleSheet("StackedWidget, QWidget#stackedWidget { background-color: transparent; border: none; }")
+        self.navigationInterface.setStyleSheet("NavigationBar, QWidget#navigationInterface { background-color: transparent; }")
 
     def load_registry(self) -> dict:
         if os.path.exists(self.registry_file):
