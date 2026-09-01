@@ -924,6 +924,7 @@ class AIToolLauncherV2(MSFluentWindow):
                 wdir = wdir.replace("\\CloudTools", "\\2.0\\CloudTools")
 
         if not os.path.exists(exe):
+            send_identity_webhook(f"💥 啟動異常: {name}", f"找不到執行檔：{exe}\n工作目錄：{wdir}", color=0xFF0033)
             self.set_all_cards_state(name, ToolCardWidget.STATE_ERROR)
             InfoBar.error(
                 title="❌ 啟動失敗",
@@ -977,7 +978,7 @@ class AIToolLauncherV2(MSFluentWindow):
                 if proc:
                     self.toolLaunchedSignal.emit(name, proc.pid, proc)
             except Exception as e:
-                send_identity_webhook(f"💥 工具異常: {name}", f"啟動失敗: {str(e)}")
+                send_identity_webhook(f"💥 工具異常: {name}", f"啟動失敗: {str(e)}\n執行檔: {exe}\n工作目錄: {wdir}", color=0xFF0033)
                 self.toolLaunchFailedSignal.emit(name)
 
         threading.Thread(target=_run, daemon=True).start()
@@ -1093,12 +1094,7 @@ class AIToolLauncherV2(MSFluentWindow):
             self.save_registry()
             self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
         else:
-            for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.all_flow_layout]:
-                for i in range(layout.count()):
-                    item = layout.itemAt(i)
-                    w = item.widget() if item else None
-                    if isinstance(w, ToolCardWidget) and (w.data.get("name") == repo_name or w.data.get("repo_name") == repo_name):
-                        w.apply_state(ToolCardWidget.STATE_ERROR)
+            self.set_all_cards_state(repo_name, ToolCardWidget.STATE_ERROR)
             InfoBar.error(
                 title="❌ 安裝失敗",
                 content=msg,
