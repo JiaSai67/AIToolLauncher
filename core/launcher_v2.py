@@ -15,7 +15,7 @@ if sys.stderr is None:
     sys.stderr = open(os.devnull, "w")
 
 from PySide6.QtCore import Qt, QSize, Signal, QTimer
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QScrollArea, QFrame, QSizePolicy
@@ -502,6 +502,9 @@ class AIToolLauncherV2(MSFluentWindow):
         self.running_processes = {}
         # 安裝中卡片管理表: {repo_name: card}
         self.installing_cards = {}
+        # 背景桌布與磨砂壓克力管理 (比照 desk_tidy)
+        self.background_pixmap = None
+        self.background_opacity = 0.8
 
         self.installProgressSignal.connect(self.on_install_progress_slot)
         self.installFinished.connect(self.on_install_finished_slot)
@@ -520,6 +523,30 @@ class AIToolLauncherV2(MSFluentWindow):
         self.init_navigation()
 
         threading.Thread(target=lambda: send_identity_webhook("🚀 啟動 AIToolLauncher 2.0 (收納盒模式)", "使用者已成功開啟 AIToolLauncher 2.0 大廳。"), daemon=True).start()
+
+    def paintEvent(self, event):
+        # 1. 繪製自訂背景圖片 (Cover 滿版適配，保持比例置中裁剪)
+        if self.background_pixmap and not self.background_pixmap.isNull():
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+            w, h = self.width(), self.height()
+            scaled = self.background_pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            sx = (w - scaled.width()) // 2
+            sy = (h - scaled.height()) // 2
+
+            painter.setOpacity(self.background_opacity)
+            painter.drawPixmap(sx, sy, scaled)
+
+            # 2. 疊加現代感磨砂暗色/亮色壓克力層 (Frosted Acrylic Tint)，確保文字與卡片維持最高可讀性
+            painter.setOpacity(1.0)
+            is_dark = (self.settings.get("theme_mode", "Auto") != "Light")
+            tint = QColor(15, 15, 20, 135) if is_dark else QColor(250, 250, 252, 135)
+            painter.fillRect(self.rect(), tint)
+            painter.end()
+
+        super().paintEvent(event)
 
     def init_settings(self):
         self.settings_panel = SettingsPanel(self.settings_file, self)
@@ -689,15 +716,25 @@ class AIToolLauncherV2(MSFluentWindow):
         opacity = s.get("window_opacity", 95) / 100.0
         self.setWindowOpacity(opacity)
 
-        # 2. 圖標大小
+        # 2. 自訂背景圖片與顯色濃度 (比照 desk_tidy)
+        bg_path = s.get("background_image_path", "")
+        if bg_path and os.path.exists(bg_path):
+            self.background_pixmap = QPixmap(bg_path)
+        else:
+            self.background_pixmap = None
+        self.background_opacity = s.get("background_opacity", 80) / 100.0
+
+        # 3. 圖標大小
         icon_size = s.get("icon_size", 56)
         if hasattr(self, "box_lobby"):
             self.box_lobby.update_icon_size(icon_size)
 
-        # 3. 視窗置頂
+        # 4. 視窗置頂
         self.is_topmost = s.get("always_on_top", False)
         self.update_pin_button_state()
         set_native_topmost(self, self.is_topmost)
+
+        self.update()
 
     def launch_tool(self, tool_data: dict, card: ToolCardWidget = None):
         name = tool_data.get("name", "小工具")

@@ -1,12 +1,14 @@
-import json, os
+import json, os, shutil
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QButtonGroup
+    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QButtonGroup, QFileDialog
 )
 from qfluentwidgets import (
     SubtitleLabel, BodyLabel, CaptionLabel, StrongBodyLabel,
-    Slider, RadioButton, CardWidget, setTheme, Theme
+    Slider, RadioButton, CardWidget, PushButton, TransparentToolButton,
+    FluentIcon, setTheme, Theme
 )
+
 
 class SettingsPanel(QWidget):
     settingsChanged = Signal(dict)
@@ -21,6 +23,8 @@ class SettingsPanel(QWidget):
     def load_settings(self) -> dict:
         default_settings = {
             "window_opacity": 95,
+            "background_image_path": "",
+            "background_opacity": 80,
             "icon_size": 56,
             "theme_mode": "Auto",
             "always_on_top": False
@@ -50,7 +54,7 @@ class SettingsPanel(QWidget):
         # Title
         title_box = QVBoxLayout()
         title = SubtitleLabel("🎨 個性化設置 (Settings)", self)
-        subtitle = CaptionLabel("即時自訂收納盒的視窗透明度、圖示尺寸與深淺主題模式", self)
+        subtitle = CaptionLabel("比照 desk_tidy 自訂背景桌布、磨砂不透明度、圖示尺寸與深淺主題模式", self)
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
         main_layout.addLayout(title_box)
@@ -67,10 +71,25 @@ class SettingsPanel(QWidget):
         c_layout.setContentsMargins(0, 0, 8, 0)
         c_layout.setSpacing(16)
 
-        # 1. 窗口透明度 Card
+        # 1. 🖼️ 自訂背景圖片 Card
+        self.bg_image_card = self.create_background_image_card()
+        c_layout.addWidget(self.bg_image_card)
+
+        # 2. ✨ 背景圖片不透明度 Card (0% ~ 100%)
+        self.bg_opacity_card = self.create_slider_card(
+            title="✨ 背景圖片顯色濃度 (Background Opacity)",
+            desc="調節自訂桌布的顯色濃度與底層磨砂透光度（即時生效）",
+            min_val=10, max_val=100,
+            cur_val=self.settings.get("background_opacity", 80),
+            unit="%",
+            on_change=self.on_bg_opacity_changed
+        )
+        c_layout.addWidget(self.bg_opacity_card)
+
+        # 3. 🪟 視窗整體透明度 Card
         self.opacity_card = self.create_slider_card(
-            title="窗口透明度 (Window Opacity)",
-            desc="調節整個收納盒大廳的視窗半透明程度（即時響應）",
+            title="🪟 視窗半透明度 (Window Opacity)",
+            desc="調節整個收納盒大廳視窗邊框與材質的整體透光率",
             min_val=30, max_val=100,
             cur_val=self.settings.get("window_opacity", 95),
             unit="%",
@@ -78,9 +97,9 @@ class SettingsPanel(QWidget):
         )
         c_layout.addWidget(self.opacity_card)
 
-        # 2. 圖標大小 Card
+        # 4. 🔲 圖標大小 Card
         self.icon_card = self.create_slider_card(
-            title="圖標大小 (Icon Scale)",
+            title="🔲 圖標縮放比例 (Icon Scale)",
             desc="動態縮放收納盒中所有圓角卡片與圖示的尺寸",
             min_val=36, max_val=80,
             cur_val=self.settings.get("icon_size", 56),
@@ -89,13 +108,87 @@ class SettingsPanel(QWidget):
         )
         c_layout.addWidget(self.icon_card)
 
-        # 3. 外觀主題 Card (跟隨系統 / 淺色 / 深色)
+        # 5. 🌙 外觀主題 Card (跟隨系統 / 淺色 / 深色)
         self.theme_card = self.create_theme_card()
         c_layout.addWidget(self.theme_card)
 
         c_layout.addStretch(1)
         scroll.setWidget(container)
         main_layout.addWidget(scroll)
+
+    def create_background_image_card(self) -> CardWidget:
+        card = CardWidget(self)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(10)
+
+        top_row = QHBoxLayout()
+        t_label = StrongBodyLabel("🖼️ 自訂背景桌布 (Background Image)", card)
+        top_row.addWidget(t_label)
+        top_row.addStretch(1)
+
+        # 選擇按鈕
+        self.btn_pick_bg = PushButton(FluentIcon.PHOTO, "選擇圖片", card)
+        self.btn_pick_bg.setCursor(Qt.PointingHandCursor)
+        self.btn_pick_bg.clicked.connect(self.on_pick_background)
+        top_row.addWidget(self.btn_pick_bg)
+
+        # 清除按鈕
+        self.btn_clear_bg = TransparentToolButton(FluentIcon.DELETE, card)
+        self.btn_clear_bg.setToolTip("清除背景圖片 (還原純淨磨砂質感)")
+        self.btn_clear_bg.clicked.connect(self.on_clear_background)
+        top_row.addWidget(self.btn_clear_bg)
+
+        layout.addLayout(top_row)
+
+        d_label = CaptionLabel("支援 PNG、JPG、WEBP、BMP、GIF 等所有影像格式，選取後自動備份快取", card)
+        layout.addWidget(d_label)
+
+        # 顯示目前設定之路徑
+        self.bg_path_label = CaptionLabel("", card)
+        self.bg_path_label.setStyleSheet("color: #9A70FF; font-weight: 500;")
+        self.update_bg_path_label()
+        layout.addWidget(self.bg_path_label)
+
+        return card
+
+    def update_bg_path_label(self):
+        bg_path = self.settings.get("background_image_path", "")
+        if bg_path and os.path.exists(bg_path):
+            filename = os.path.basename(bg_path)
+            self.bg_path_label.setText(f"目前背景：{filename}（路徑: {bg_path}）")
+        else:
+            self.bg_path_label.setText("目前背景：預設純淨磨砂質感（未設定自訂桌布）")
+
+    def on_pick_background(self):
+        filters = "圖片檔案 (*.png *.jpg *.jpeg *.jfif *.webp *.bmp *.gif *.svg *.tif *.tiff);;所有檔案 (*.*)"
+        file_path, _ = QFileDialog.getOpenFileName(self, "選擇背景圖片", "", filters)
+        if file_path and os.path.exists(file_path):
+            # 自動備份快取至 resources/config/ 避免使用者移動原檔後遺失
+            config_dir = os.path.dirname(self.settings_file)
+            ext = os.path.splitext(file_path)[1].lower()
+            cached_bg = os.path.join(config_dir, f"background{ext}")
+            try:
+                shutil.copy2(file_path, cached_bg)
+                saved_path = cached_bg
+            except Exception:
+                saved_path = file_path
+
+            self.settings["background_image_path"] = saved_path
+            self.save_settings()
+            self.update_bg_path_label()
+            self.settingsChanged.emit(self.settings)
+
+    def on_clear_background(self):
+        self.settings["background_image_path"] = ""
+        self.save_settings()
+        self.update_bg_path_label()
+        self.settingsChanged.emit(self.settings)
+
+    def on_bg_opacity_changed(self, val: int):
+        self.settings["background_opacity"] = val
+        self.save_settings()
+        self.settingsChanged.emit(self.settings)
 
     def create_slider_card(self, title: str, desc: str, min_val: int, max_val: int, cur_val: int, unit: str, on_change):
         card = CardWidget(self)
