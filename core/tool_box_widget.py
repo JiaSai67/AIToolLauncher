@@ -77,7 +77,7 @@ class ToolCardWidget(QWidget):
     小工具磁貼卡片
     特點：
     1. 卡片佈局零預留高度 (Zero Height Reserved)，尺寸緊湊純粹。
-    2. 狀態膠囊浮動於行距自然留邊區塊 (Natural Gap Floating Badge)，零排版推擠。
+    2. 狀態膠囊以獨立圖層 (Topmost Overlay Layer) 懸浮於卡片底緣，完整顯示絕不被裁切 (No Clipping)，零排版推擠。
     3. 全域響應右鍵選單與極速秒級收藏切換。
     """
     toolClicked = Signal(dict, bool)           # (tool_data, is_installed)
@@ -104,6 +104,16 @@ class ToolCardWidget(QWidget):
 
         self.cloudIconLoaded.connect(self.on_cloud_icon_ready)
         self.init_ui()
+
+        # 當小卡被銷毀時，連帶銷毀懸浮於父層圖層的狀態標籤
+        self.destroyed.connect(self._on_destroyed)
+
+    def _on_destroyed(self):
+        if hasattr(self, "status_badge") and self.status_badge:
+            try:
+                self.status_badge.deleteLater()
+            except Exception:
+                pass
 
     def init_ui(self):
         card_w = max(112, self.icon_size + 48)
@@ -145,7 +155,7 @@ class ToolCardWidget(QWidget):
         self.title_label.setStyleSheet("font-size: 12px; line-height: 1.2;")
         self.card_layout.addWidget(self.title_label, 0, Qt.AlignCenter)
 
-        # 2. 浮動狀態膠囊標籤 (依附於容器，直接浮動顯示於原本的留邊區塊上)
+        # 2. 獨立圖層狀態膠囊 (依附於父容器最上層，絕不受限於卡片邊界裁剪)
         badge_parent = self.parent_flow_widget if self.parent_flow_widget else self
         self.status_badge = CaptionLabel("", badge_parent)
         self.status_badge.setAlignment(Qt.AlignCenter)
@@ -163,6 +173,10 @@ class ToolCardWidget(QWidget):
         super().moveEvent(event)
         self.update_badge_pos()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_badge_pos()
+
     def hideEvent(self, event):
         super().hideEvent(event)
         if hasattr(self, "status_badge") and self.status_badge:
@@ -176,7 +190,7 @@ class ToolCardWidget(QWidget):
 
     def update_badge_pos(self):
         """
-        將狀態膠囊精確對齊於小卡正下方的自然留邊區塊 (Gap)
+        圖層懸浮定位：精確懸浮於卡片底緣（跨越卡片邊框與間距），在父容器圖層頂層完整繪製，絕不被切齊！
         """
         if not hasattr(self, "status_badge") or self.status_badge is None:
             return
@@ -189,10 +203,10 @@ class ToolCardWidget(QWidget):
 
         if self.status_badge.parent() == self:
             bx = (self.width() - bw) // 2
-            by = self.height() + 1
+            by = self.height() - 10
         else:
             bx = self.x() + (self.width() - bw) // 2
-            by = self.y() + self.height() + 1
+            by = self.y() + self.height() - 10
 
         self.status_badge.setGeometry(bx, by, bw, bh)
         self.status_badge.raise_()
@@ -215,12 +229,12 @@ class ToolCardWidget(QWidget):
 
     def apply_state(self, state: str):
         """
-        切換並套用卡片與浮動狀態標籤外觀 (零預留，零推擠)
+        切換並套用卡片與頂層懸浮狀態標籤外觀 (頂層圖層渲染，零裁切，零推擠)
         """
         self.current_state = state
 
         if state == self.STATE_INSTALLING:
-            # 📥 安裝中 (偏黑卡片 + 藍色虛線框 + 留邊區塊浮動進度膠囊)
+            # 📥 安裝中 (偏黑卡片 + 藍色虛線框 + 頂層浮動進度膠囊)
             self.card.setStyleSheet("""
                 CardWidget {
                     background-color: rgba(18, 18, 20, 0.85);
@@ -242,7 +256,7 @@ class ToolCardWidget(QWidget):
             self.update_badge_pos()
 
         elif state == self.STATE_RUNNING:
-            # 🟢 已開啟 (翡翠綠邊框 + 留邊區塊浮動運行中膠囊標籤)
+            # 🟢 已開啟 (翡翠綠邊框 + 頂層浮動運行中膠囊標籤)
             self.card.setStyleSheet("""
                 CardWidget {
                     background-color: rgba(16, 185, 129, 0.15);
@@ -268,7 +282,7 @@ class ToolCardWidget(QWidget):
             self.update_badge_pos()
 
         elif state == self.STATE_ERROR:
-            # 🔴 錯誤 (緋紅邊框 + 留邊區塊浮動錯誤膠囊)
+            # 🔴 錯誤 (緋紅邊框 + 頂層浮動錯誤膠囊)
             self.card.setStyleSheet("""
                 CardWidget {
                     background-color: rgba(239, 68, 68, 0.15);
@@ -327,7 +341,7 @@ class ToolCardWidget(QWidget):
 
     def set_install_progress(self, progress: int, status_text: str = ""):
         """
-        更新安裝進度文字 (浮動於留邊區塊顯示，零預留，零推擠)
+        更新安裝進度文字 (頂層圖層懸浮顯示，零裁切，零推擠)
         """
         self.install_progress = max(0, min(100, progress))
         if self.current_state != self.STATE_INSTALLING:

@@ -395,9 +395,12 @@ class BoxLobbyInterface(QWidget):
         return card
 
     def load_and_render_tools(self, filter_text: str = ""):
-        # 1. 清除舊有元件
+        # 1. 清除舊有元件與頂層懸浮標籤
         clear_layout(self.favorites_flow_layout)
         clear_layout(self.all_flow_layout)
+        for container in [self.favorites_flow_widget, self.all_flow_widget]:
+            for child in container.findChildren(CaptionLabel):
+                child.deleteLater()
 
         installed_tools = self.parent_window.load_tools()
         favorites_list = self.parent_window.registry.get("favorites", [])
