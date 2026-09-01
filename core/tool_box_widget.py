@@ -116,19 +116,19 @@ class ToolCardWidget(QWidget):
                 pass
 
     def init_ui(self):
-        card_w = max(112, self.icon_size + 48)
-        card_h = max(104, self.icon_size + 48)
+        card_w = max(120, self.icon_size + 56)
+        card_h = max(114, self.icon_size + 56)
 
-        # 鎖定 Widget 緊湊尺寸 (零多餘預留空間)
+        # 鎖定 Widget 緊湊尺寸 (加寬放大 2~4pt，保留絕佳呼吸感)
         self.setFixedSize(card_w, card_h)
 
-        # 1. 內部卡片本體 (填滿整個區域，比例完美)
+        # 1. 內部卡片本體 (填滿整個區域，比例完美大氣)
         self.card = InnerCard(self)
         self.card.setGeometry(0, 0, card_w, card_h)
 
         self.card_layout = QVBoxLayout(self.card)
-        self.card_layout.setContentsMargins(4, 8, 4, 6)
-        self.card_layout.setSpacing(4)
+        self.card_layout.setContentsMargins(6, 10, 6, 6)
+        self.card_layout.setSpacing(6)
         self.card_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
         # 圓角圖標
@@ -145,14 +145,14 @@ class ToolCardWidget(QWidget):
         cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "cache", "icons")
         get_cloud_icon_async(repo_name, cache_dir, lambda p: self.cloudIconLoaded.emit(p))
 
-        # 名稱 (高度 34px，支援 2 行換行)
+        # 名稱 (高度 36px，支援 2 行換行，字級優化清晰)
         name = self.data.get("name", "未命名工具")
         self.title_label = StrongBodyLabel(name, self.card)
-        self.title_label.setFixedSize(card_w - 8, 34)
+        self.title_label.setFixedSize(card_w - 12, 36)
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setWordWrap(True)
         self.title_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.title_label.setStyleSheet("font-size: 12px; line-height: 1.2;")
+        self.title_label.setStyleSheet("font-size: 12px; line-height: 1.25;")
         self.card_layout.addWidget(self.title_label, 0, Qt.AlignCenter)
 
         # 2. 獨立圖層狀態膠囊 (依附於父容器最上層，絕不受限於卡片邊界裁剪)
@@ -416,12 +416,12 @@ class ToolCardWidget(QWidget):
 
     def set_icon_size(self, size: int):
         self.icon_size = size
-        card_w = max(112, self.icon_size + 48)
-        card_h = max(104, self.icon_size + 48)
+        card_w = max(120, self.icon_size + 56)
+        card_h = max(114, self.icon_size + 56)
         self.setFixedSize(card_w, card_h)
         self.card.setGeometry(0, 0, card_w, card_h)
         self.icon_label.setFixedSize(self.icon_size, self.icon_size)
-        self.title_label.setFixedSize(card_w - 8, 34)
+        self.title_label.setFixedSize(card_w - 12, 36)
         self.update_badge_pos()
         self.update_icon()
 
