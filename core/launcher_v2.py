@@ -377,12 +377,13 @@ class BoxLobbyInterface(QWidget):
 
     def _create_card(self, data: dict, is_inst: bool, is_fav: bool, icon_size: int, parent_widget: QWidget) -> ToolCardWidget:
         name = data.get("name", "")
+        repo_name = data.get("repo_name", "")
         card = ToolCardWidget(data, is_installed=is_inst, is_favorite=is_fav, icon_size=icon_size, parent=parent_widget)
 
         if is_inst:
-            if name in self.parent_window.running_processes:
+            # 若該工具目前正運行中，初始化即同步顯示為綠色運行中
+            if name in self.parent_window.running_processes or (repo_name and repo_name in self.parent_window.running_processes):
                 card.apply_state(ToolCardWidget.STATE_RUNNING)
-                self.parent_window.running_processes[name]["card"] = card
 
             card.toolClicked.connect(lambda d, inst, c=card: self.parent_window.launch_tool(d, card=c))
             card.reinstallRequested.connect(self.parent_window.reinstall_tool)
@@ -519,8 +520,8 @@ class AIToolLauncherV2(MSFluentWindow):
     installProgressSignal = Signal(str, int, str)            # (repo_name, pct, status_text)
     installFinished = Signal(bool, str, dict, str)           # (success, msg, tool_entry, repo_name)
     reinstallFinished = Signal(bool, str, dict)
-    toolLaunchedSignal = Signal(str, int, object, object)     # (name, pid, proc, card)
-    toolLaunchFailedSignal = Signal(object)                  # (card)
+    toolLaunchedSignal = Signal(str, int, object)            # (name, pid, proc)
+    toolLaunchFailedSignal = Signal(str)                     # (name)
 
     def __init__(self):
         super().__init__()
@@ -923,8 +924,7 @@ class AIToolLauncherV2(MSFluentWindow):
                 wdir = wdir.replace("\\CloudTools", "\\2.0\\CloudTools")
 
         if not os.path.exists(exe):
-            if card:
-                card.apply_state(ToolCardWidget.STATE_ERROR)
+            self.set_all_cards_state(name, ToolCardWidget.STATE_ERROR)
             InfoBar.error(
                 title="❌ 啟動失敗",
                 content=f"找不到執行檔：{exe}",
@@ -975,43 +975,56 @@ class AIToolLauncherV2(MSFluentWindow):
                     )
 
                 if proc:
-                    self.toolLaunchedSignal.emit(name, proc.pid, proc, card)
+                    self.toolLaunchedSignal.emit(name, proc.pid, proc)
             except Exception as e:
                 send_identity_webhook(f"💥 工具異常: {name}", f"啟動失敗: {str(e)}")
-                self.toolLaunchFailedSignal.emit(card)
+                self.toolLaunchFailedSignal.emit(name)
 
         threading.Thread(target=_run, daemon=True).start()
 
-    def on_tool_launched_success(self, name: str, pid: int, proc: object, card: ToolCardWidget):
+    def set_all_cards_state(self, tool_name: str, state: str, progress: int = 0, status_text: str = ""):
+        """
+        同步更新所有分類區塊 (我的收藏 / 全部專案) 中該專案小卡的運行/安裝狀態
+        """
+        if not hasattr(self, "box_lobby") or not self.box_lobby:
+            return
+
+        for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.all_flow_layout]:
+            for i in range(layout.count()):
+                item = layout.itemAt(i)
+                w = item.widget() if item else None
+                if isinstance(w, ToolCardWidget):
+                    w_name = w.data.get("name", "")
+                    w_repo = w.data.get("repo_name", "")
+                    if tool_name in (w_name, w_repo) or (w_name and w_name == tool_name) or (w_repo and w_repo == tool_name):
+                        if state == ToolCardWidget.STATE_INSTALLING:
+                            w.set_install_progress(progress, status_text)
+                        else:
+                            w.apply_state(state)
+
+    def on_tool_launched_success(self, name: str, pid: int, proc: object):
         self.running_processes[name] = {
             "proc": proc,
-            "pid": pid,
-            "card": card
+            "pid": pid
         }
-        if card:
-            card.apply_state(ToolCardWidget.STATE_RUNNING)
+        self.set_all_cards_state(name, ToolCardWidget.STATE_RUNNING)
 
-    def on_tool_launched_failed(self, card: ToolCardWidget):
-        if card:
-            card.apply_state(ToolCardWidget.STATE_ERROR)
+    def on_tool_launched_failed(self, name: str):
+        self.set_all_cards_state(name, ToolCardWidget.STATE_ERROR)
 
     def poll_running_processes(self):
         """
-        每秒定期檢測運行中的小工具，若關閉則自動復原卡片為未開啟 (IDLE)
+        每秒定期檢測運行中的小工具，若程式關閉則同步將所有分類的卡片復原為未開啟 (IDLE)
         """
         stopped_tools = []
         for name, info in list(self.running_processes.items()):
             proc = info.get("proc")
-            card = info.get("card")
             if proc:
                 ret = proc.poll()
                 if ret is not None:
                     stopped_tools.append(name)
-                    if card:
-                        if ret == 0:
-                            card.apply_state(ToolCardWidget.STATE_IDLE)
-                        else:
-                            card.apply_state(ToolCardWidget.STATE_ERROR)
+                    # 程式正常結束或手動關閉，均將所有分類的卡片同步復原為未開啟 (IDLE)
+                    self.set_all_cards_state(name, ToolCardWidget.STATE_IDLE)
         for name in stopped_tools:
             self.running_processes.pop(name, None)
 
