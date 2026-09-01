@@ -1,4 +1,4 @@
-import os, sys, subprocess, webbrowser
+import os, sys, subprocess, webbrowser, re
 from PySide6.QtCore import Qt, Signal, QRectF, QSize, QPoint
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QFont, QPen, QContextMenuEvent
 from PySide6.QtWidgets import (
@@ -13,6 +13,52 @@ try:
     from core.cloud_manager import get_cloud_icon_async
 except ModuleNotFoundError:
     from cloud_manager import get_cloud_icon_async
+
+
+def format_card_title(raw_name: str) -> str:
+    """
+    智慧專案名稱排版與語義換行算法：
+    1. 移除不自然的中間橫線（例如 'Steam Manifest - 本地開發版' -> 'Steam Manifest\\n本地開發版'）
+    2. 智慧分離英文主名稱與中文功能/角色後綴（例如 'Steam Manifest 更新工具' -> 'Steam Manifest\\n更新工具'）
+    3. 智慧分離括號後綴（例如 '按鍵發話控制器 (PTTApp)' -> '按鍵發話控制器\\n(PTTApp)'）
+    4. 支援在名稱中手動插入 '\\n' 自訂換行
+    """
+    if not raw_name:
+        return "未命名"
+    if "\n" in raw_name:
+        return raw_name
+
+    name = raw_name.strip()
+
+    # 1. 含有分隔符號 ( - , – , — , : , ： )
+    for sep in [" - ", " – ", " — ", "：", ": "]:
+        if sep in name:
+            parts = name.split(sep, 1)
+            if parts[0].strip() and parts[1].strip():
+                return f"{parts[0].strip()}\n{parts[1].strip()}"
+
+    # 2. 含有括號後綴，例如 '按鍵發話控制器 (PTTApp)'
+    paren_match = re.match(r"^(.+?)\s*([（\(].+?[）\)])$", name)
+    if paren_match:
+        p1, p2 = paren_match.group(1).strip(), paren_match.group(2).strip()
+        if p1 and p2:
+            return f"{p1}\n{p2}"
+
+    # 3. 英文主名稱 + 中文角色/版本，例如 'Steam Manifest 更新工具'
+    eng_chn_match = re.match(r"^([a-zA-Z0-9\s\.\-_]+?)\s+([\u4e00-\u9fa5]+.*)$", name)
+    if eng_chn_match:
+        p1, p2 = eng_chn_match.group(1).strip(), eng_chn_match.group(2).strip()
+        if p1 and p2:
+            return f"{p1}\n{p2}"
+
+    # 4. 中文主名稱 + 英文角色/版本，例如 '語音辨識 Whisper'
+    chn_eng_match = re.match(r"^([\u4e00-\u9fa5\s]+?)\s+([a-zA-Z0-9\.\-_]+.*)$", name)
+    if chn_eng_match:
+        p1, p2 = chn_eng_match.group(1).strip(), chn_eng_match.group(2).strip()
+        if p1 and p2:
+            return f"{p1}\n{p2}"
+
+    return name
 
 
 def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.22) -> QPixmap:
@@ -145,9 +191,10 @@ class ToolCardWidget(QWidget):
         cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "cache", "icons")
         get_cloud_icon_async(repo_name, cache_dir, lambda p: self.cloudIconLoaded.emit(p))
 
-        # 名稱 (高度 38px，支援 2 行換行，字級優化清晰)
+        # 名稱 (高度 38px，支援智慧語義換行，字級優化清晰)
         name = self.data.get("name", "未命名工具")
-        self.title_label = StrongBodyLabel(name, self.card)
+        display_name = format_card_title(name)
+        self.title_label = StrongBodyLabel(display_name, self.card)
         self.title_label.setFixedSize(card_w - 14, 38)
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setWordWrap(True)
