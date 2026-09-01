@@ -1149,10 +1149,13 @@ class AIToolLauncherV2(MSFluentWindow):
         if not w.exec():
             return
 
-        uninstall_tool(tool_data, self.cloud_tools_dir)
-        self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != name]
-        self.save_registry()
-        self.box_lobby.refresh_all(show_prompt=False)
+        def _task():
+            uninstall_tool(tool_data, self.cloud_tools_dir)
+            self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != name]
+            self.save_registry()
+            QTimer.singleShot(0, lambda: self.box_lobby.refresh_all(show_prompt=False))
+
+        threading.Thread(target=_task, daemon=True).start()
 
 
 def main():

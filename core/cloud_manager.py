@@ -22,31 +22,42 @@ def get_silent_flags_and_startupinfo():
 
 def force_remove_directory(path: str):
     """
-    Windows 上強制刪除包含唯讀、隱藏與 .git 屬性的資料夾 (100% 靜默無黑窗)
+    100% 純 Python 記憶體原生刪除目錄與唯讀/.git屬性檔案，零進程生成，絕無任何終端視窗/白窗閃爍
     """
     if not os.path.exists(path):
         return
-    try:
-        def on_rm_error(func, p, exc_info):
-            try:
-                os.chmod(p, stat.S_IWRITE)
-                func(p)
-            except Exception:
-                pass
-        shutil.rmtree(path, onerror=on_rm_error)
-    except Exception:
-        pass
 
-    if os.path.exists(path):
+    def remove_readonly(func, p, exc_info):
         try:
-            flags, startupinfo = get_silent_flags_and_startupinfo()
-            subprocess.run(
-                ["cmd.exe", "/c", f'rd /s /q "{os.path.normpath(path)}"'],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                creationflags=flags, startupinfo=startupinfo
-            )
+            os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+            func(p)
         except Exception:
             pass
+
+    # 1. 深度優先遍歷清除唯讀屬性並刪除檔案
+    for root, dirs, files in os.walk(path, topdown=False):
+        for f in files:
+            fp = os.path.join(root, f)
+            try:
+                os.chmod(fp, stat.S_IWRITE | stat.S_IREAD)
+                os.remove(fp)
+            except Exception:
+                pass
+        for d in dirs:
+            dp = os.path.join(root, d)
+            try:
+                os.chmod(dp, stat.S_IWRITE | stat.S_IREAD)
+                os.rmdir(dp)
+            except Exception:
+                pass
+
+    # 2. 最終目錄清除
+    try:
+        if os.path.exists(path):
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+            shutil.rmtree(path, onerror=remove_readonly)
+    except Exception:
+        pass
 
 def parse_linkme(target_dir: str) -> dict:
     """
