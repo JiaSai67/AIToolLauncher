@@ -22,6 +22,9 @@ class SettingsPanel(QWidget):
 
     def load_settings(self) -> dict:
         default_settings = {
+            "window_width": 960,
+            "window_height": 680,
+            "window_is_maximized": False,
             "window_opacity": 95,
             "background_image_path": "",
             "background_opacity": 80,

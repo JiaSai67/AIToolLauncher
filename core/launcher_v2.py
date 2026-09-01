@@ -630,7 +630,12 @@ class AIToolLauncherV2(MSFluentWindow):
             if hasattr(self, 'titleBar') and self.titleBar:
                 self.titleBar.setIcon(app_icon)
 
-        self.resize(960, 680)
+        # 讀取並還原上一次記憶的拉伸大小與最大化狀態
+        saved_w = self.settings.get("window_width", 960)
+        saved_h = self.settings.get("window_height", 680)
+        w = max(740, int(saved_w))
+        h = max(520, int(saved_h))
+        self.resize(w, h)
         self.setMinimumSize(740, 520)
 
         # 建立右上角置頂圖釘按鈕 (位於最小化按鈕左側)
@@ -643,6 +648,47 @@ class AIToolLauncherV2(MSFluentWindow):
         self.update_pin_button_state()
 
         self.apply_live_settings(self.settings)
+
+        if self.settings.get("window_is_maximized", False):
+            self.showMaximized()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "settings") and self.settings is not None and hasattr(self, "settings_panel"):
+            if not self.isMaximized() and not self.isMinimized():
+                self.settings["window_width"] = self.width()
+                self.settings["window_height"] = self.height()
+                self.settings["window_is_maximized"] = False
+                if not hasattr(self, "_save_size_timer"):
+                    self._save_size_timer = QTimer(self)
+                    self._save_size_timer.setSingleShot(True)
+                    self._save_size_timer.setInterval(600)
+                    self._save_size_timer.timeout.connect(self.settings_panel.save_settings)
+                self._save_size_timer.start()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if hasattr(self, "settings") and self.settings is not None and hasattr(self, "settings_panel"):
+            if event.type() == event.Type.WindowStateChange:
+                if self.isMaximized():
+                    self.settings["window_is_maximized"] = True
+                    self.settings_panel.save_settings()
+                elif not self.isMinimized():
+                    self.settings["window_is_maximized"] = False
+                    self.settings["window_width"] = self.width()
+                    self.settings["window_height"] = self.height()
+                    self.settings_panel.save_settings()
+
+    def closeEvent(self, event):
+        if hasattr(self, "settings") and self.settings is not None and hasattr(self, "settings_panel"):
+            if self.isMaximized():
+                self.settings["window_is_maximized"] = True
+            elif not self.isMinimized():
+                self.settings["window_is_maximized"] = False
+                self.settings["window_width"] = self.width()
+                self.settings["window_height"] = self.height()
+            self.settings_panel.save_settings()
+        super().closeEvent(event)
 
     def showEvent(self, event):
         super().showEvent(event)
