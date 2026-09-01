@@ -704,6 +704,14 @@ class AIToolLauncherV2(MSFluentWindow):
         exe = tool_data.get("executable", "")
         wdir = tool_data.get("working_dir", "")
 
+        # 防連點 / 重複觸發保護 (1.2 秒內同一工具僅允許觸發一次啟動)
+        now = time.time()
+        if not hasattr(self, "_launch_cooldowns"):
+            self._launch_cooldowns = {}
+        if now - self._launch_cooldowns.get(name, 0) < 1.2:
+            return
+        self._launch_cooldowns[name] = now
+
         # 1. 若該軟體已在運行中，直接呼叫至最上層 (已開啟 = 綠色，再次點選直接置頂)
         if name in self.running_processes:
             info = self.running_processes[name]

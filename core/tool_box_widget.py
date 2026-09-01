@@ -57,19 +57,19 @@ class InnerCard(CardWidget):
         if event.button() == Qt.LeftButton:
             if self.wrapper.current_state != self.wrapper.STATE_INSTALLING:
                 self.wrapper.toolClicked.emit(self.wrapper.data, self.wrapper.is_installed)
+            event.accept()
+            return
         elif event.button() == Qt.RightButton:
             if self.wrapper.current_state != self.wrapper.STATE_INSTALLING:
                 self.wrapper.show_context_menu(event.globalPosition().toPoint())
-                event.accept()
-                return
+            event.accept()
+            return
         super().mousePressEvent(event)
 
     def contextMenuEvent(self, event: QContextMenuEvent):
         if self.wrapper.current_state != self.wrapper.STATE_INSTALLING:
             self.wrapper.show_context_menu(event.globalPos())
-            event.accept()
-        else:
-            super().contextMenuEvent(event)
+        event.accept()
 
 
 class ToolCardWidget(QWidget):
@@ -337,24 +337,6 @@ class ToolCardWidget(QWidget):
         self.icon_label.setFixedSize(self.icon_size, self.icon_size)
         self.title_label.setFixedSize(card_w - 8, 34)
         self.update_icon()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            if self.current_state != self.STATE_INSTALLING:
-                self.toolClicked.emit(self.data, self.is_installed)
-        elif event.button() == Qt.RightButton:
-            if self.current_state != self.STATE_INSTALLING:
-                self.show_context_menu(event.globalPosition().toPoint())
-                event.accept()
-                return
-        super().mousePressEvent(event)
-
-    def contextMenuEvent(self, event: QContextMenuEvent):
-        if self.current_state != self.STATE_INSTALLING:
-            self.show_context_menu(event.globalPos())
-            event.accept()
-        else:
-            super().contextMenuEvent(event)
 
     def show_context_menu(self, pos: QPoint):
         menu = RoundMenu(parent=self)
