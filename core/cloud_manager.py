@@ -1,4 +1,4 @@
-import os, sys, json, subprocess, shutil, re, urllib.request, threading, stat
+import os, sys, json, subprocess, shutil, re, urllib.request, threading, stat, time
 from datetime import datetime
 
 try:
@@ -201,8 +201,17 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
             _report(5, "正在連線 GitHub 倉庫...")
             os.makedirs(cloud_tools_dir, exist_ok=True)
 
+            # 若目錄已存在，先嘗試清理或遷移，確保 git clone 順利執行
             if os.path.exists(target_dir):
                 force_remove_directory(target_dir)
+                if os.path.exists(target_dir):
+                    # 若仍有被 Windows 鎖定的檔案殘留，自動遷移至暫存目錄
+                    try:
+                        trash_dir = os.path.join(cloud_tools_dir, f".trash_{repo_name}_{int(time.time())}")
+                        os.rename(target_dir, trash_dir)
+                        threading.Thread(target=lambda: force_remove_directory(trash_dir), daemon=True).start()
+                    except Exception:
+                        pass
 
             _report(15, "開始下載原始碼...")
 
@@ -224,8 +233,13 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
             p.wait(timeout=120)
 
             if p.returncode != 0:
-                on_finished(False, f"Git clone 失敗 (代碼: {p.returncode})", None)
-                return
+                # 若 clone 失敗但目錄已具備 git，嘗試 fetch + reset
+                if os.path.exists(os.path.join(target_dir, ".git")):
+                    subprocess.run(["git", "fetch", "--all"], cwd=target_dir, creationflags=flags, startupinfo=startupinfo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=target_dir, creationflags=flags, startupinfo=startupinfo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    on_finished(False, f"Git clone 失敗 (代碼: {p.returncode})", None)
+                    return
 
             _report(75, "解析專案啟動配置...")
 
