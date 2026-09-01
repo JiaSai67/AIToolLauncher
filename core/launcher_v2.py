@@ -413,11 +413,11 @@ class BoxLobbyInterface(QWidget):
         favorites_list = self.parent_window.registry.get("favorites", [])
         icon_size = self.parent_window.settings.get("icon_size", 56)
 
-        cloud_installed_names = [
+        all_installed_names = [
             os.path.basename(t.get("working_dir", "")).lower()
             for t in installed_tools
-            if "cloudtools" in t.get("working_dir", "").lower()
-        ]
+            if t.get("working_dir")
+        ] + [t.get("repo_name", "").lower() for t in installed_tools if t.get("repo_name")]
 
         # 整理所有專案清單 (已安裝 + 雲端未安裝)
         all_items = []
@@ -426,7 +426,7 @@ class BoxLobbyInterface(QWidget):
 
         for repo in self.cloud_repos:
             rname = repo.get("name", "")
-            if rname.lower() in cloud_installed_names:
+            if rname.lower() in all_installed_names:
                 continue
             all_items.append((repo, False))
 
