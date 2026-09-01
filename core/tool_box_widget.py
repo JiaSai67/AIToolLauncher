@@ -482,17 +482,25 @@ class ToolCardWidget(QWidget):
             act_fav = Action(FluentIcon.HEART, "⭐ 加入收藏 (Add to Favorite)", triggered=lambda: self.toggleFavoriteRequested.emit(self.data))
 
         if self.is_installed:
+            wdir = self.data.get("working_dir", "")
+            is_cloud = "cloudtools" in wdir.lower()
+
             # === 已安裝小工具選單 ===
             act_launch = Action(FluentIcon.PLAY, "啟動工具 (Launch)", triggered=lambda: self.toolClicked.emit(self.data, True))
-            act_reinstall = Action(FluentIcon.SYNC, "重新拉取與安裝 (Reinstall / Git Pull)", triggered=lambda: self.reinstallRequested.emit(self.data))
             act_open_dir = Action(FluentIcon.FOLDER, "開啟所在資料夾 (Open Folder)", triggered=self.open_tool_folder)
             act_copy_path = Action(FluentIcon.COPY, "複製執行檔路徑 (Copy Path)", triggered=self.copy_executable_path)
-            act_uninstall = Action(FluentIcon.DELETE, "移除小工具 (Uninstall)", triggered=lambda: self.uninstallRequested.emit(self.data))
 
             menu.addAction(act_launch)
             menu.addAction(act_fav)
             menu.addSeparator()
-            menu.addAction(act_reinstall)
+
+            if is_cloud:
+                act_reinstall = Action(FluentIcon.SYNC, "重新拉取與更新 (Git Pull)", triggered=lambda: self.reinstallRequested.emit(self.data))
+                act_uninstall = Action(FluentIcon.DELETE, "解除安裝雲端版本 (Uninstall)", triggered=lambda: self.uninstallRequested.emit(self.data))
+                menu.addAction(act_reinstall)
+            else:
+                act_uninstall = Action(FluentIcon.CLOSE, "從收納盒移除 (不刪除檔案)", triggered=lambda: self.uninstallRequested.emit(self.data))
+
             menu.addAction(act_open_dir)
             menu.addAction(act_copy_path)
             menu.addSeparator()

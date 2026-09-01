@@ -289,6 +289,12 @@ class BoxLobbyInterface(QWidget):
         self.search_input.textChanged.connect(self.on_search_changed)
         top_bar.addWidget(self.search_input)
 
+        # 新增本地小工具按鈕
+        self.btn_add_local = TransparentToolButton(FluentIcon.ADD, self)
+        self.btn_add_local.setToolTip("📁 新增 / 匯入本地小工具 (Add Local Tool)")
+        self.btn_add_local.clicked.connect(self.parent_window.add_local_tool_dialog)
+        top_bar.addWidget(self.btn_add_local)
+
         # 重新整理按鈕
         self.btn_refresh = TransparentToolButton(FluentIcon.SYNC, self)
         self.btn_refresh.setToolTip("重新整理列表與雲端庫")
@@ -809,12 +815,39 @@ class AIToolLauncherV2(MSFluentWindow):
                                     t["executable"] = fixed_exe
                                     t["working_dir"] = fixed_wdir
                                     modified = True
+                    # 自動保障本機核心開發專案 (若本地原始碼存在且未在清單中，自動登記防遺失)
+                    local_dev_manifest = r"G:\python\SteamManifestUpdater\src\main.py"
+                    if os.path.exists(local_dev_manifest):
+                        registered_exes = [os.path.normpath(t.get("executable", "")) for t in tools]
+                        if os.path.normpath(local_dev_manifest) not in registered_exes:
+                            tools.insert(0, {
+                                "name": "Steam Manifest - 本地開發版",
+                                "description": "本地原始碼開發版本 (支援快速熱重載與除錯)",
+                                "executable": local_dev_manifest,
+                                "working_dir": r"G:\python\SteamManifestUpdater"
+                            })
+                            favs = data.setdefault("favorites", [])
+                            if "Steam Manifest - 本地開發版" not in favs:
+                                favs.insert(0, "Steam Manifest - 本地開發版")
+                            modified = True
+
                     if modified:
                         self.save_registry()
                     return data
             except Exception:
                 pass
-        return {"tools": []}
+        
+        # 預設註冊表
+        init_tools = []
+        local_dev_manifest = r"G:\python\SteamManifestUpdater\src\main.py"
+        if os.path.exists(local_dev_manifest):
+            init_tools.append({
+                "name": "Steam Manifest - 本地開發版",
+                "description": "本地原始碼開發版本 (支援快速熱重載與除錯)",
+                "executable": local_dev_manifest,
+                "working_dir": r"G:\python\SteamManifestUpdater"
+            })
+        return {"tools": init_tools, "favorites": ["Steam Manifest - 本地開發版"] if init_tools else []}
 
     def save_registry(self):
         try:
@@ -1164,17 +1197,80 @@ class AIToolLauncherV2(MSFluentWindow):
                 parent=self
             )
 
+    def add_local_tool_dialog(self):
+        """
+        手動新增 / 匯入本地小工具檔案 (.py, .bat, .exe)
+        """
+        from PySide6.QtWidgets import QFileDialog, QInputDialog
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "📁 選擇本地小工具啟動檔",
+            r"G:\python",
+            "可執行檔 (*.py *.bat *.cmd *.exe);;Python 腳本 (*.py);;批次檔 (*.bat *.cmd);;執行檔 (*.exe);;所有檔案 (*.*)"
+        )
+        if not file_path or not os.path.exists(file_path):
+            return
+
+        file_path = os.path.normpath(file_path)
+        wdir = os.path.dirname(file_path)
+        
+        # 若為子目錄，自動往上一層偵測 linkme.bat
+        if os.path.exists(os.path.join(os.path.dirname(wdir), "linkme.bat")):
+            wdir = os.path.dirname(wdir)
+        
+        if os.path.exists(os.path.join(wdir, "linkme.bat")):
+            info = parse_linkme(wdir)
+            if info:
+                tool_name = info.get("name") or os.path.basename(wdir)
+                tool_desc = info.get("description") or "本地專案"
+                self.registry.setdefault("tools", []).append({
+                    "name": tool_name,
+                    "description": tool_desc,
+                    "executable": info.get("executable") or file_path,
+                    "working_dir": wdir
+                })
+                self.save_registry()
+                self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
+                InfoBar.success(title="🎉 新增成功", content=f"已成功添加本地專案 【{tool_name}】", duration=3000, parent=self)
+                return
+
+        default_name = os.path.basename(wdir) if os.path.basename(file_path).lower() in ("main.py", "start.bat", "run.py", "app.py") else os.path.splitext(os.path.basename(file_path))[0]
+        name, ok = QInputDialog.getText(self, "✨ 設定小工具名稱", "請輸入顯示名稱：", text=default_name)
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+
+        desc, ok = QInputDialog.getText(self, "📝 設定小工具描述", "請輸入功能簡述 (選填)：", text="本地小工具")
+        if not ok:
+            desc = ""
+
+        self.registry["tools"] = [t for t in self.registry.get("tools", []) if t.get("name") != name]
+        self.registry.setdefault("tools", []).append({
+            "name": name,
+            "description": desc.strip(),
+            "executable": file_path,
+            "working_dir": wdir
+        })
+        self.save_registry()
+        self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
+        InfoBar.success(title="🎉 新增成功", content=f"已成功添加本地小工具 【{name}】", duration=3000, parent=self)
+
     def uninstall_tool(self, tool_data: dict):
         name = tool_data.get("name", "")
         repo_name = tool_data.get("repo_name", "")
         wdir = tool_data.get("working_dir", "")
         
         display_name = name or repo_name or "小工具"
-        w = MessageBox(
-            f"🗑️ 確認移除 【{display_name}】",
-            f"您確定要將 【{display_name}】 從收納盒中解除安裝嗎？\n\n若是雲端專案，將同時清除其本機資料夾，並重置為「未安裝」狀態。",
-            self
-        )
+        is_cloud = "cloudtools" in wdir.lower()
+
+        if is_cloud:
+            dlg_title = f"🗑️ 確認解除安裝 【{display_name}】"
+            dlg_msg = f"您確定要解除安裝雲端工具 【{display_name}】 嗎？\n\n這將重置其為「未安裝」狀態並清理 CloudTools 下載資料夾。"
+        else:
+            dlg_title = f"❌ 從清單移除 【{display_name}】"
+            dlg_msg = f"您確定要將 【{display_name}】 從收納盒清單中移除嗎？\n\n【重要提示】此操作僅從啟動器移除捷徑，您的本地專案原始碼、開發數據與檔案將 100% 完整保留，絕不會被刪除。"
+
+        w = MessageBox(dlg_title, dlg_msg, self)
         if not w.exec():
             return
 
@@ -1196,13 +1292,13 @@ class AIToolLauncherV2(MSFluentWindow):
         # 2. 立即就地重新渲染小卡清單 (0ms，極速無卡頓，不觸發多餘網路請求)
         self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
 
-        # 3. 在背景線程靜默清理本機檔案資料夾 (完全不阻塞 UI 主線程)
-        if wdir and os.path.exists(wdir) and os.path.abspath(wdir).startswith(os.path.abspath(self.cloud_tools_dir)):
+        # 3. 若為雲端專案，在背景線程靜默清理本機檔案資料夾 (本地開發專案絕對不碰！)
+        if is_cloud and wdir and os.path.exists(wdir) and os.path.abspath(wdir).startswith(os.path.abspath(self.cloud_tools_dir)):
             threading.Thread(target=lambda: force_remove_directory(wdir), daemon=True).start()
 
         InfoBar.success(
-            title="🗑️ 已移除小工具",
-            content=f"已成功解除安裝 【{display_name}】",
+            title="🗑️ 已移除雲端小工具" if is_cloud else "❌ 已從清單移除",
+            content=f"已成功解除安裝 【{display_name}】" if is_cloud else f"已將 【{display_name}】 從收納盒清單移除（本地檔案完整保留）",
             orient=Qt.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP,
