@@ -865,7 +865,24 @@ class AIToolLauncherV2(MSFluentWindow):
         self.registry = self.load_registry()
 
     def load_tools(self) -> list:
-        return self.registry.get("tools", [])
+        tools = self.registry.get("tools", [])
+        # 保險守護機制：若本機 SteamManifestUpdater 存在，保證其永不缺席
+        local_dev_manifest = r"G:\python\SteamManifestUpdater\src\main.py"
+        if os.path.exists(local_dev_manifest):
+            registered_exes = [os.path.normpath(t.get("executable", "")).lower() for t in tools]
+            if os.path.normpath(local_dev_manifest).lower() not in registered_exes:
+                local_entry = {
+                    "name": "Steam Manifest - 本地開發版",
+                    "description": "本地原始碼開發版本 (支援快速熱重載與除錯)",
+                    "executable": local_dev_manifest,
+                    "working_dir": r"G:\python\SteamManifestUpdater"
+                }
+                tools.insert(0, local_entry)
+                favs = self.registry.setdefault("favorites", [])
+                if "Steam Manifest - 本地開發版" not in favs:
+                    favs.insert(0, "Steam Manifest - 本地開發版")
+                self.save_registry()
+        return tools
 
     def apply_live_settings(self, s: dict):
         self.settings = s
@@ -1127,10 +1144,11 @@ class AIToolLauncherV2(MSFluentWindow):
     def on_install_finished_slot(self, success: bool, msg: str, tool_entry: dict, repo_name: str):
         if success and tool_entry:
             t_name = tool_entry.get("name", repo_name)
+            target_wdir = os.path.normpath(tool_entry.get("working_dir", "")).lower()
+            # 僅替換/更新相同 CloudTools 目錄的項目，絕對不刪除任何本機開發目錄！
             self.registry["tools"] = [
                 t for t in self.registry.get("tools", [])
-                if t.get("name") not in (t_name, repo_name)
-                and t.get("repo_name", "") not in (t_name, repo_name)
+                if os.path.normpath(t.get("working_dir", "")).lower() != target_wdir
             ]
             self.registry.setdefault("tools", []).append(tool_entry)
             self.save_registry()
@@ -1278,18 +1296,27 @@ class AIToolLauncherV2(MSFluentWindow):
         if not w.exec():
             return
 
-        # 1. 主線程立即同步更新記憶體註冊表 (0ms 無延遲，無競爭條件)
-        self.registry["tools"] = [
-            t for t in self.registry.get("tools", [])
-            if t.get("name") not in (name, repo_name)
-            and t.get("repo_name", "") not in (name, repo_name)
-            and (not wdir or t.get("working_dir") != wdir)
-        ]
-        favs = self.registry.setdefault("favorites", [])
-        if name in favs:
-            favs.remove(name)
-        if repo_name and repo_name in favs:
-            favs.remove(repo_name)
+        # 1. 主線程立即同步更新記憶體註冊表 (0ms 無延遲，以實體路徑精準過濾，絕不波及本地開發專案)
+        if is_cloud:
+            target_cloud_dir = os.path.normpath(wdir).lower()
+            self.registry["tools"] = [
+                t for t in self.registry.get("tools", [])
+                if os.path.normpath(t.get("working_dir", "")).lower() != target_cloud_dir
+            ]
+            # 若雲端項目在收藏清單中，僅移除該雲端名稱 (保留本地開發版)
+            favs = self.registry.setdefault("favorites", [])
+            if name in favs and name != "Steam Manifest - 本地開發版":
+                favs.remove(name)
+        else:
+            target_local_dir = os.path.normpath(wdir).lower()
+            target_local_exe = os.path.normpath(tool_data.get("executable", "")).lower()
+            self.registry["tools"] = [
+                t for t in self.registry.get("tools", [])
+                if not (os.path.normpath(t.get("working_dir", "")).lower() == target_local_dir and os.path.normpath(t.get("executable", "")).lower() == target_local_exe)
+            ]
+            favs = self.registry.setdefault("favorites", [])
+            if name in favs:
+                favs.remove(name)
 
         self.save_registry()
 
