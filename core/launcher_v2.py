@@ -866,7 +866,9 @@ class AIToolLauncherV2(MSFluentWindow):
 
     def load_tools(self) -> list:
         tools = self.registry.get("tools", [])
-        # 保險守護機制：若本機 SteamManifestUpdater 存在，保證其永不缺席
+        modified = False
+
+        # 1. 保險守護機制：若本機 SteamManifestUpdater 存在，保證其永不缺席
         local_dev_manifest = r"G:\python\SteamManifestUpdater\src\main.py"
         if os.path.exists(local_dev_manifest):
             registered_exes = [os.path.normpath(t.get("executable", "")).lower() for t in tools]
@@ -881,7 +883,41 @@ class AIToolLauncherV2(MSFluentWindow):
                 favs = self.registry.setdefault("favorites", [])
                 if "Steam Manifest - 本地開發版" not in favs:
                     favs.insert(0, "Steam Manifest - 本地開發版")
-                self.save_registry()
+                modified = True
+
+        # 2. 自動掃描 CloudTools 目錄下已存在實體檔案的專案 (確保本機有檔案時 100% 顯示已安裝，絕不誤判為點擊安裝)
+        if os.path.exists(self.cloud_tools_dir):
+            registered_wdirs = [os.path.normpath(t.get("working_dir", "")).lower() for t in tools]
+            for folder_name in os.listdir(self.cloud_tools_dir):
+                folder_path = os.path.join(self.cloud_tools_dir, folder_name)
+                if os.path.isdir(folder_path) and os.path.normpath(folder_path).lower() not in registered_wdirs:
+                    info = parse_linkme(folder_path)
+                    exec_file = None
+                    tool_name = folder_name
+                    tool_desc = "雲端工具"
+                    if info:
+                        tool_name = info.get("name") or folder_name
+                        tool_desc = info.get("description") or "雲端工具"
+                        exec_file = info.get("executable")
+                    if not exec_file or not os.path.exists(exec_file):
+                        for cand in ["main.py", "start.bat", "src/main.py", "app.py"]:
+                            p = os.path.normpath(os.path.join(folder_path, cand))
+                            if os.path.exists(p):
+                                exec_file = p
+                                break
+                    if exec_file and os.path.exists(exec_file):
+                        tools.append({
+                            "name": tool_name,
+                            "repo_name": folder_name,
+                            "description": tool_desc,
+                            "executable": exec_file,
+                            "working_dir": folder_path
+                        })
+                        modified = True
+
+        if modified:
+            self.save_registry()
+
         return tools
 
     def apply_live_settings(self, s: dict):
@@ -1162,7 +1198,16 @@ class AIToolLauncherV2(MSFluentWindow):
                     if isinstance(w, ToolCardWidget):
                         w_name = w.data.get("name", "")
                         w_repo = w.data.get("repo_name", "")
-                        if repo_name in (w_name, w_repo) or (w_name and w_name == t_name):
+                        w_wdir = w.data.get("working_dir", "")
+                        matches = False
+                        if repo_name and w_repo and repo_name.lower() == w_repo.lower():
+                            matches = True
+                        elif repo_name and w_name and repo_name.lower() == w_name.lower():
+                            matches = True
+                        elif target_wdir and w_wdir and target_wdir == os.path.normpath(w_wdir).lower():
+                            matches = True
+
+                        if matches:
                             w.data = tool_entry
                             w.is_installed = True
                             w.title_label.setText(format_card_title(t_name))
@@ -1196,27 +1241,28 @@ class AIToolLauncherV2(MSFluentWindow):
             )
 
     def reinstall_tool(self, tool_data: dict):
-        name = tool_data.get("name", "小工具")
-        InfoBar.info(
-            title="🔄 正在重新拉取",
-            content=f"正在同步 【{name}】 最新程式碼與套件...",
-            orient=Qt.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=3500,
-            parent=self
-        )
+        name = tool_data.get("name", "")
+        py_cli = sys.executable
+        if "pythonw.exe" in py_cli.lower():
+            py_cli = py_cli.lower().replace("pythonw.exe", "python.exe")
+
+        def _on_progress(pct, status_text):
+            self.installProgressSignal.emit(name, pct, status_text)
 
         def _on_finished(success, msg, updated_tool):
-            self.reinstallFinished.emit(success, msg, updated_tool or {})
+            self.reinstallFinished.emit(success, msg, updated_tool)
 
-        py_cli = get_real_python_exe(prefer_gui=False)
-        reinstall_tool_async(tool_data, py_cli, _on_finished)
+        reinstall_tool_async(tool_data, py_cli, _on_finished, _on_progress)
 
     def on_reinstall_finished_slot(self, success: bool, msg: str, updated_tool: dict):
-        if success:
+        if success and updated_tool:
+            for i, t in enumerate(self.registry.get("tools", [])):
+                if t.get("name") == updated_tool.get("name"):
+                    self.registry["tools"][i] = updated_tool
+                    break
             self.save_registry()
             self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
+
             InfoBar.success(
                 title="🎉 更新成功",
                 content=f"【{updated_tool.get('name', '小工具')}】已完成同步更新！",
@@ -1340,6 +1386,7 @@ class AIToolLauncherV2(MSFluentWindow):
 
         # 2. 🚀 0ms 就地精準狀態切換 (In-Place Fast Update，完全不重構銷毀元件，100% 絲滑零卡頓)
         if is_cloud:
+            target_cloud_dir = os.path.normpath(wdir).lower()
             for i in range(self.box_lobby.all_flow_layout.count()):
                 item = self.box_lobby.all_flow_layout.itemAt(i)
                 w = item.widget() if item else None
@@ -1347,7 +1394,13 @@ class AIToolLauncherV2(MSFluentWindow):
                     w_name = w.data.get("name", "")
                     w_repo = w.data.get("repo_name", "")
                     w_wdir = w.data.get("working_dir", "")
-                    if (w_wdir and target_cloud_dir == os.path.normpath(w_wdir).lower()) or repo_name in (w_name, w_repo):
+                    matches = False
+                    if w_wdir and target_cloud_dir == os.path.normpath(w_wdir).lower():
+                        matches = True
+                    elif repo_name and w_repo and repo_name.lower() == w_repo.lower():
+                        matches = True
+
+                    if matches:
                         w.is_installed = False
                         w.apply_state(ToolCardWidget.STATE_IDLE)
                         w.update_tooltip()
