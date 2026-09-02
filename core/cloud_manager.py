@@ -151,12 +151,13 @@ def fetch_github_repos(callback):
 
 def get_cloud_icon_async(repo_name: str, cache_dir: str, on_icon_ready):
     """
-    非同步獲取 GitHub 雲端專案的圖示並快取至本地
+    非同步獲取 GitHub 雲端專案的圖示並快取至本地 (若已快取則靜默略過，0 額外耗時)
     """
+    if not repo_name:
+        return
     os.makedirs(cache_dir, exist_ok=True)
     cached_file = os.path.join(cache_dir, f"{repo_name}.png")
     if os.path.exists(cached_file) and os.path.getsize(cached_file) > 0:
-        on_icon_ready(cached_file)
         return
 
     candidate_raw_urls = [

@@ -61,12 +61,18 @@ def format_card_title(raw_name: str) -> str:
     return name
 
 
+_ROUNDED_PIXMAP_CACHE: dict = {}
+
 def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.22) -> QPixmap:
     """
-    將任意圖示裁切並繪製為最高解析度、鮮明原色的平滑圓角圖示
+    將任意圖示裁切並繪製為最高解析度、鮮明原色的平滑圓角圖示 (具備高速記憶體快取，0ms 瞬發)
     """
     if src_pixmap.isNull():
         return src_pixmap
+
+    cache_key = (src_pixmap.cacheKey(), size, radius_ratio)
+    if cache_key in _ROUNDED_PIXMAP_CACHE:
+        return _ROUNDED_PIXMAP_CACHE[cache_key]
 
     scaled = src_pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
     radius = max(6, int(size * radius_ratio))
@@ -87,6 +93,7 @@ def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.2
     painter.drawPixmap(x, y, scaled)
     painter.end()
 
+    _ROUNDED_PIXMAP_CACHE[cache_key] = dest
     return dest
 
 
