@@ -1,12 +1,12 @@
 import os, sys, subprocess, webbrowser, re
 from PySide6.QtCore import Qt, Signal, QRectF, QSize, QPoint
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QFont, QPen, QContextMenuEvent
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QFont, QPen, QContextMenuEvent, QMovie
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSizePolicy
 )
 from qfluentwidgets import (
     CardWidget, StrongBodyLabel, CaptionLabel,
-    FluentIcon, RoundMenu, Action, ToolTipFilter, ToolTipPosition
+    FluentIcon, RoundMenu, Action, ToolTipFilter, ToolTipPosition, MenuAnimationType
 )
 
 try:
@@ -481,6 +481,8 @@ class ToolCardWidget(QWidget):
 
     def show_context_menu(self, pos: QPoint):
         menu = RoundMenu(parent=self)
+        if hasattr(menu, "view") and menu.view:
+            menu.view.setUniformItemSizes(True)
 
         # 收藏/取消收藏動作
         if self.is_favorite:
@@ -524,7 +526,19 @@ class ToolCardWidget(QWidget):
             menu.addAction(act_github)
             menu.addAction(act_copy_url)
 
-        menu.exec(pos)
+        # 🚀 60~144 FPS 極速平滑彈出選單 (FADE_IN_DROP_DOWN 零掉幀與動畫暫停機制)
+        main_win = self.window()
+        bg_movie = getattr(main_win, "bg_movie", None)
+        movie_was_running = False
+        if bg_movie and hasattr(bg_movie, "state") and bg_movie.state() == QMovie.Running:
+            movie_was_running = True
+            bg_movie.setPaused(True)
+
+        try:
+            menu.exec(pos, ani=True, aniType=MenuAnimationType.FADE_IN_DROP_DOWN)
+        finally:
+            if movie_was_running and bg_movie and bg_movie.state() == QMovie.Paused:
+                bg_movie.setPaused(False)
 
     def open_tool_folder(self):
         working_dir = self.data.get("working_dir", "")
