@@ -14,7 +14,7 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w")
 
-from PySide6.QtCore import Qt, QSize, Signal, QTimer
+from PySide6.QtCore import Qt, QSize, Signal, QTimer, QEasingCurve
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QMovie
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
@@ -25,7 +25,7 @@ from qfluentwidgets import (
     MSFluentWindow, NavigationItemPosition, FluentIcon, SearchLineEdit,
     SubtitleLabel, CaptionLabel, InfoBar, InfoBarPosition, setTheme,
     Theme, setThemeColor, CardWidget, BodyLabel, TransparentToolButton,
-    StrongBodyLabel, MessageBox, FlowLayout
+    StrongBodyLabel, MessageBox, FlowLayout, SmoothScrollArea
 )
 
 def apply_frosted_blur(src_pixmap: QPixmap, blur_radius: int) -> QPixmap:
@@ -303,11 +303,12 @@ class BoxLobbyInterface(QWidget):
 
         self.layout.addLayout(top_bar)
 
-        # 2. 滾動區域 (包含上下雙區塊: ⭐ 我的收藏 / 📦 全部專案)
-        self.scroll_area = QScrollArea(self)
+        # 2. 🚀 60~144+ FPS 極速絲滑平滑滾動區域 (包含上下雙區塊: ⭐ 我的收藏 / 📦 全部專案)
+        self.scroll_area = SmoothScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
-        self.scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.scroll_area.enableTransparentBackground()
+        self.scroll_area.setScrollAnimation(Qt.Vertical, 160, QEasingCurve.OutQuad)
 
         self.container = QWidget()
         self.container.setStyleSheet("background: transparent;")
@@ -627,7 +628,7 @@ class AIToolLauncherV2(MSFluentWindow):
             # 1. 繪製深色/淺色底色基底 (避免自訂圖片透明通道透出桌面)
             is_dark = (self.settings.get("theme_mode", "Auto") != "Light")
             base_bg = QColor(18, 18, 22) if is_dark else QColor(240, 240, 245)
-            painter.fillRect(self.rect(), base_bg)
+            painter.fillRect(event.rect(), base_bg)
 
             # 2. 0ms 硬體貼圖繪製快取桌布 (144+ FPS 極限流暢)
             painter.setOpacity(self.background_opacity)
@@ -636,10 +637,10 @@ class AIToolLauncherV2(MSFluentWindow):
             # 3. 疊加現代感磨砂壓克力透光層 (Dark: 15% 黑, Light: 15% 白，維持文字與卡片清晰度)
             painter.setOpacity(0.15)
             tint = QColor(10, 10, 14) if is_dark else QColor(255, 255, 255)
-            painter.fillRect(self.rect(), tint)
+            painter.fillRect(event.rect(), tint)
         else:
             # 未自訂背景圖片時，使用 Fluent 預設原生背景
-            painter.fillRect(self.rect(), self.backgroundColor)
+            painter.fillRect(event.rect(), self.backgroundColor)
 
         painter.end()
 

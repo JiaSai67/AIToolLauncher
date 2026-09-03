@@ -1,12 +1,12 @@
 import json, os, shutil
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QEasingCurve
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QButtonGroup, QFileDialog
 )
 from qfluentwidgets import (
     SubtitleLabel, BodyLabel, CaptionLabel, StrongBodyLabel,
     Slider, RadioButton, CardWidget, PushButton, TransparentToolButton,
-    FluentIcon, setTheme, Theme
+    FluentIcon, setTheme, Theme, SmoothScrollArea
 )
 
 
@@ -64,10 +64,11 @@ class SettingsPanel(QWidget):
         main_layout.addLayout(title_box)
 
         # Scroll Area for settings cards
-        scroll = QScrollArea(self)
+        scroll = SmoothScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll.enableTransparentBackground()
+        scroll.setScrollAnimation(Qt.Vertical, 160, QEasingCurve.OutQuad)
 
         container = QWidget()
         container.setStyleSheet("background: transparent;")

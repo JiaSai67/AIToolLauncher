@@ -223,10 +223,6 @@ class ToolCardWidget(QWidget):
         self.update_tooltip()
         self.card.installEventFilter(ToolTipFilter(self.card, showDelay=250, position=ToolTipPosition.BOTTOM))
 
-    def moveEvent(self, event):
-        super().moveEvent(event)
-        self.update_badge_pos()
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.update_badge_pos()
@@ -241,6 +237,7 @@ class ToolCardWidget(QWidget):
         if self.current_state != self.STATE_IDLE or not self.is_installed:
             self.status_badge.show()
             self.update_badge_pos()
+            self.status_badge.raise_()
 
     def update_badge_pos(self):
         """
@@ -263,7 +260,6 @@ class ToolCardWidget(QWidget):
             by = self.y() + self.height() - 10
 
         self.status_badge.setGeometry(bx, by, bw, bh)
-        self.status_badge.raise_()
 
     def update_tooltip(self):
         name = self.data.get("name", "未命名工具")
