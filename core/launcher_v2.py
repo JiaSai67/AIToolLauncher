@@ -391,13 +391,17 @@ class BoxLobbyInterface(QWidget):
             if name in self.parent_window.running_processes or (repo_name and repo_name in self.parent_window.running_processes):
                 card.apply_state(ToolCardWidget.STATE_RUNNING)
 
-            card.toolClicked.connect(lambda d, inst, c=card: self.parent_window.launch_tool(d, card=c))
-            card.reinstallRequested.connect(self.parent_window.reinstall_tool)
-            card.uninstallRequested.connect(self.parent_window.uninstall_tool)
-        else:
-            card.toolClicked.connect(lambda d, inst: self.parent_window.install_cloud_tool(d))
-            card.installRequested.connect(self.parent_window.install_cloud_tool)
+        # 動態分發點擊事件：依據當前卡片的 is_installed 狀態精準觸發啟動或安裝 (確保解除安裝後再點擊可直接安裝)
+        def _on_card_clicked(d, inst, c=card):
+            if c.is_installed:
+                self.parent_window.launch_tool(c.data, card=c)
+            else:
+                self.parent_window.install_cloud_tool(c.data)
 
+        card.toolClicked.connect(_on_card_clicked)
+        card.installRequested.connect(self.parent_window.install_cloud_tool)
+        card.reinstallRequested.connect(self.parent_window.reinstall_tool)
+        card.uninstallRequested.connect(self.parent_window.uninstall_tool)
         card.toggleFavoriteRequested.connect(self.parent_window.toggle_favorite)
         return card
 
@@ -1149,16 +1153,20 @@ class AIToolLauncherV2(MSFluentWindow):
         self.box_lobby.render_favorites_only(filter_text=self.box_lobby.search_input.text().strip())
 
     def install_cloud_tool(self, repo_data: dict):
-        repo_name = repo_data.get("name", "小工具")
+        repo_name = repo_data.get("repo_name") or repo_data.get("name", "小工具")
+        repo_data["repo_name"] = repo_name
         
         # 標記正在安裝中的小卡
         for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.all_flow_layout]:
             for i in range(layout.count()):
                 item = layout.itemAt(i)
                 w = item.widget() if item else None
-                if isinstance(w, ToolCardWidget) and (w.data.get("name") == repo_name or w.data.get("repo_name") == repo_name):
-                    w.apply_state(ToolCardWidget.STATE_INSTALLING)
-                    w.set_install_progress(5, "正在連線...")
+                if isinstance(w, ToolCardWidget):
+                    w_repo = w.data.get("repo_name", "")
+                    w_name = w.data.get("name", "")
+                    if (repo_name and w_repo and repo_name.lower() == w_repo.lower()) or (repo_name and w_name and repo_name.lower() == w_name.lower()):
+                        w.apply_state(ToolCardWidget.STATE_INSTALLING)
+                        w.set_install_progress(5, "正在連線...")
 
         def _on_progress(pct, msg):
             self.installProgressSignal.emit(repo_name, pct, msg)
@@ -1174,8 +1182,11 @@ class AIToolLauncherV2(MSFluentWindow):
             for i in range(layout.count()):
                 item = layout.itemAt(i)
                 w = item.widget() if item else None
-                if isinstance(w, ToolCardWidget) and (w.data.get("name") == repo_name or w.data.get("repo_name") == repo_name):
-                    w.set_install_progress(pct, status_text)
+                if isinstance(w, ToolCardWidget):
+                    w_repo = w.data.get("repo_name", "")
+                    w_name = w.data.get("name", "")
+                    if (repo_name and w_repo and repo_name.lower() == w_repo.lower()) or (repo_name and w_name and repo_name.lower() == w_name.lower()):
+                        w.set_install_progress(pct, status_text)
 
     def on_install_finished_slot(self, success: bool, msg: str, tool_entry: dict, repo_name: str):
         if success and tool_entry:
@@ -1399,9 +1410,12 @@ class AIToolLauncherV2(MSFluentWindow):
                         matches = True
                     elif repo_name and w_repo and repo_name.lower() == w_repo.lower():
                         matches = True
+                    elif repo_name and w_name and repo_name.lower() == w_name.lower():
+                        matches = True
 
                     if matches:
                         w.is_installed = False
+                        w.data["repo_name"] = repo_name or (os.path.basename(wdir) if wdir else "")
                         w.apply_state(ToolCardWidget.STATE_IDLE)
                         w.update_tooltip()
             # 若收藏區塊有變更，僅局部刷新收藏區塊 (耗時 < 10ms)

@@ -189,7 +189,7 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
     下載並安裝雲端小工具 (git clone + linkme.bat 註冊 + pip 安裝，100% 靜默無任何黑窗)
     """
     def _task():
-        repo_name = repo.get('name', '')
+        repo_name = repo.get('repo_name') or repo.get('name', '')
         clone_url = repo.get('clone_url', '') or f"https://github.com/JiaSai67/{repo_name}.git"
         target_dir = os.path.join(cloud_tools_dir, repo_name)
         flags, startupinfo = get_silent_flags_and_startupinfo()
