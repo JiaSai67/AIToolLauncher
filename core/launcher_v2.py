@@ -18,7 +18,7 @@ from PySide6.QtCore import Qt, QSize, Signal, QTimer, QEasingCurve
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QMovie
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-    QScrollArea, QFrame, QSizePolicy, QGraphicsScene,
+    QScrollArea, QAbstractScrollArea, QFrame, QSizePolicy, QGraphicsScene,
     QGraphicsPixmapItem, QGraphicsBlurEffect
 )
 from qfluentwidgets import (
@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.10"
+VERSION = "2.0.11"
 
 
 def set_native_topmost(window_obj, is_topmost: bool):
@@ -920,6 +920,45 @@ class AIToolLauncherV2(MSFluentWindow):
         self.stackedWidget.setProperty("isTransparent", True)
         self.stackedWidget.setStyleSheet("StackedWidget, QWidget#stackedWidget { background-color: transparent; border: none; }")
         self.apply_nav_transparent_style()
+
+        # 4. 🚀 144 FPS 絲滑分頁切換優化 (維持原汁原味由下往上滑動過渡效果)
+        # 優化滑動幅度：將笨重跳躍的 76px 調整為細膩精緻的 36px 微滑入
+        for info in self.stackedWidget.view.aniInfos:
+            info.deltaY = 36
+
+        # 連接動畫開始/結束信號：在分頁切換滑動過程中瞬時休眠背景 GIF，100% 渲染算力集中於分頁過渡
+        self.stackedWidget.view.aniStart.connect(self._on_tab_ani_start)
+        self.stackedWidget.view.aniFinished.connect(self._on_tab_ani_finished)
+
+        # 預先拋光設置面板，消除首次點擊切換時的排版卡頓
+        self.settings_panel.ensurePolished()
+
+    def switchTo(self, interface: QWidget):
+        """
+        🚀 144 FPS 絲滑分頁微滑動切換 (保持原汁原味由下往上滑入動效)：
+        1. 瞬態休眠背景動態 GIF，100% 渲染算力集中於分頁滑動過渡
+        2. 動畫減速曲線優化為 OutCubic，滑行自然絲滑
+        3. 時長優化為 180ms，消除 300ms/76px 低頻掉幀跳動感
+        """
+        if isinstance(interface, QAbstractScrollArea):
+            interface.verticalScrollBar().setValue(0)
+        self.stackedWidget.view.setCurrentWidget(
+            interface,
+            needPopOut=False,
+            showNextWidgetDirectly=True,
+            duration=180,
+            easingCurve=QEasingCurve.OutCubic
+        )
+
+    def _on_tab_ani_start(self):
+        if hasattr(self, "bg_movie") and self.bg_movie and self.bg_movie.isValid():
+            if self.bg_movie.state() == QMovie.MovieState.Running:
+                self.bg_movie.setPaused(True)
+
+    def _on_tab_ani_finished(self):
+        if hasattr(self, "bg_movie") and self.bg_movie and self.bg_movie.isValid():
+            if self.bg_movie.state() == QMovie.MovieState.Paused:
+                self.bg_movie.setPaused(False)
 
     def apply_nav_transparent_style(self):
         """
