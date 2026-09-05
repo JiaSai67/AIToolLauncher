@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.9"
+VERSION = "2.0.10"
 
 
 def set_native_topmost(window_obj, is_topmost: bool):
