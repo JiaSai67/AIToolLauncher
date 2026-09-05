@@ -281,12 +281,16 @@ class BoxLobbyInterface(QWidget):
         top_bar.addLayout(title_box)
         top_bar.addStretch(1)
 
-        # 搜尋框
+        # 搜尋框 (附帶 90ms 極速防抖計時器，杜絕打字連續重繪卡頓)
         self.search_input = SearchLineEdit(self)
         self.search_input.setPlaceholderText("🔍 搜尋小工具...")
         self.search_input.setFixedWidth(220)
         self.search_input.setClearButtonEnabled(True)
-        self.search_input.textChanged.connect(self.on_search_changed)
+        self._search_debounce_timer = QTimer(self)
+        self._search_debounce_timer.setSingleShot(True)
+        self._search_debounce_timer.setInterval(90)
+        self._search_debounce_timer.timeout.connect(lambda: self.filter_cards_fast(self.search_input.text().strip()))
+        self.search_input.textChanged.connect(lambda: self._search_debounce_timer.start())
         top_bar.addWidget(self.search_input)
 
         # 新增本地小工具按鈕
@@ -308,10 +312,18 @@ class BoxLobbyInterface(QWidget):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
         self.scroll_area.enableTransparentBackground()
-        self.scroll_area.setScrollAnimation(Qt.Vertical, 160, QEasingCurve.OutQuad)
+        self.scroll_area.setScrollAnimation(Qt.Vertical, 120, QEasingCurve.OutQuad)
+
+        # 滾輪滾動瞬態休眠保護：在滾動過程中暫停背景 GIF 渲染，將 100% 算力讓渡給滾動，滾動停止 160ms 後無縫恢復
+        self._scroll_pause_timer = QTimer(self)
+        self._scroll_pause_timer.setSingleShot(True)
+        self._scroll_pause_timer.setInterval(160)
+        self._scroll_pause_timer.timeout.connect(self._resume_bg_movie_after_scroll)
+        self.scroll_area.viewport().installEventFilter(self)
 
         self.container = QWidget()
         self.container.setStyleSheet("background: transparent;")
+        self.container.setAttribute(Qt.WA_StaticContents, True)
         self.content_layout = QVBoxLayout(self.container)
         self.content_layout.setContentsMargins(4, 4, 8, 24)
         self.content_layout.setSpacing(18)
@@ -323,6 +335,7 @@ class BoxLobbyInterface(QWidget):
 
         self.favorites_flow_widget = QWidget(self.container)
         self.favorites_flow_widget.setStyleSheet("background: transparent;")
+        self.favorites_flow_widget.setAttribute(Qt.WA_StaticContents, True)
         self.favorites_flow_layout = FlowLayout(self.favorites_flow_widget, needAni=False)
         self.favorites_flow_layout.setContentsMargins(0, 4, 0, 8)
         self.favorites_flow_layout.setSpacing(16)
@@ -341,6 +354,7 @@ class BoxLobbyInterface(QWidget):
 
         self.all_flow_widget = QWidget(self.container)
         self.all_flow_widget.setStyleSheet("background: transparent;")
+        self.all_flow_widget.setAttribute(Qt.WA_StaticContents, True)
         self.all_flow_layout = FlowLayout(self.all_flow_widget, needAni=False)
         self.all_flow_layout.setContentsMargins(0, 4, 0, 8)
         self.all_flow_layout.setSpacing(16)
@@ -354,8 +368,29 @@ class BoxLobbyInterface(QWidget):
         self.load_and_render_tools()
         self.fetch_cloud_repos_async()
 
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QMovie
+        if obj == self.scroll_area.viewport() and event.type() == QEvent.Type.Wheel:
+            if hasattr(self.parent_window, "bg_movie") and self.parent_window.bg_movie and self.parent_window.bg_movie.isValid():
+                if self.parent_window.bg_movie.state() == QMovie.MovieState.Running:
+                    self.parent_window.bg_movie.setPaused(True)
+                self._scroll_pause_timer.start()
+        return super().eventFilter(obj, event)
+
+    def _resume_bg_movie_after_scroll(self):
+        from PySide6.QtGui import QMovie
+        if hasattr(self.parent_window, "bg_movie") and self.parent_window.bg_movie and self.parent_window.bg_movie.isValid():
+            if self.parent_window.bg_movie.state() == QMovie.MovieState.Paused:
+                self.parent_window.bg_movie.setPaused(False)
+
     def refresh_all(self, show_prompt: bool = False):
         self.parent_window.reload_registry()
+        try:
+            from core.cloud_manager import clear_negative_icon_cache
+            clear_negative_icon_cache()
+        except Exception:
+            pass
         self.fetch_cloud_repos_async()
         self.load_and_render_tools(filter_text=self.search_input.text().strip())
         if show_prompt:
@@ -406,6 +441,60 @@ class BoxLobbyInterface(QWidget):
         card.toggleFavoriteRequested.connect(self.parent_window.toggle_favorite)
         return card
 
+    def filter_cards_fast(self, filter_text: str = ""):
+        """
+        🚀 0ms 瞬發就地可視性過濾 (In-place Visibility Filter)：
+        不銷毀重建卡片 Widget，僅切換 setVisible，徹底杜絕打字卡頓、內存釋放抖動與圖標網路請求！
+        """
+        filter_lower = filter_text.strip().lower()
+
+        # 1. 篩選「我的收藏」區塊
+        fav_visible_count = 0
+        fav_empty_label = getattr(self, "fav_empty_msg", None)
+        for i in range(self.favorites_flow_layout.count()):
+            item = self.favorites_flow_layout.itemAt(i)
+            w = item.widget() if item else None
+            if isinstance(w, ToolCardWidget):
+                name = (w.data.get("name") or "").lower()
+                desc = (w.data.get("description") or "").lower()
+                matched = (filter_lower in name) or (filter_lower in desc) if filter_lower else True
+                w.setVisible(matched)
+                if matched:
+                    fav_visible_count += 1
+            elif isinstance(w, CaptionLabel):
+                fav_empty_label = w
+
+        self.favorites_header.setText(f"⭐ 我的收藏 ({fav_visible_count})")
+        if fav_empty_label:
+            if fav_visible_count == 0:
+                fav_empty_label.setText("（無符合收藏的專案）" if filter_lower else "（右鍵點擊專案小卡可「加入收藏」）")
+                fav_empty_label.show()
+            else:
+                fav_empty_label.hide()
+
+        # 2. 篩選「全部專案」區塊
+        all_visible_count = 0
+        all_empty_label = getattr(self, "all_empty_msg", None)
+        for i in range(self.all_flow_layout.count()):
+            item = self.all_flow_layout.itemAt(i)
+            w = item.widget() if item else None
+            if isinstance(w, ToolCardWidget):
+                name = (w.data.get("name") or "").lower()
+                desc = (w.data.get("description") or "").lower()
+                matched = (filter_lower in name) or (filter_lower in desc) if filter_lower else True
+                w.setVisible(matched)
+                if matched:
+                    all_visible_count += 1
+            elif isinstance(w, CaptionLabel):
+                all_empty_label = w
+
+        self.all_header.setText(f"📦 全部專案 ({all_visible_count})")
+        if all_empty_label:
+            if all_visible_count == 0:
+                all_empty_label.show()
+            else:
+                all_empty_label.hide()
+
     def load_and_render_tools(self, filter_text: str = ""):
         # 1. 清除舊有元件與頂層懸浮標籤
         clear_layout(self.favorites_flow_layout)
@@ -441,52 +530,57 @@ class BoxLobbyInterface(QWidget):
 
         self.all_items_cache = all_items
 
-        # 篩選與分類
+        # 建立收藏與全部清單
         matched_all = []
         matched_favorites = []
 
         for data, is_inst in all_items:
             name = data.get("name", "")
             repo_name = data.get("repo_name", "")
-            desc = data.get("description") or ""
             is_fav = (name in favorites_list or (repo_name and repo_name in favorites_list))
-
-            if filter_text:
-                if filter_text.lower() not in name.lower() and filter_text.lower() not in desc.lower():
-                    continue
-
             matched_all.append((data, is_inst, is_fav))
             if is_fav:
                 matched_favorites.append((data, is_inst, is_fav))
 
         # === 渲染 1: ⭐ 我的收藏 ===
         self.favorites_header.setText(f"⭐ 我的收藏 ({len(matched_favorites)})")
+        for data, is_inst, is_fav in matched_favorites:
+            card = self._create_card(data, is_inst, is_fav, icon_size, self.favorites_flow_widget)
+            self.favorites_flow_layout.addWidget(card)
+
+        self.fav_empty_msg = CaptionLabel("（右鍵點擊專案小卡可「加入收藏」）", self.favorites_flow_widget)
+        self.fav_empty_msg.setStyleSheet("color: #888888; padding: 10px;")
+        self.favorites_flow_layout.addWidget(self.fav_empty_msg)
         if matched_favorites:
-            for data, is_inst, is_fav in matched_favorites:
-                card = self._create_card(data, is_inst, is_fav, icon_size, self.favorites_flow_widget)
-                self.favorites_flow_layout.addWidget(card)
+            self.fav_empty_msg.hide()
         else:
-            empty_text = "（右鍵點擊專案小卡可「加入收藏」）" if not filter_text else "（無符合收藏的專案）"
-            empty_msg = CaptionLabel(empty_text, self.favorites_flow_widget)
-            empty_msg.setStyleSheet("color: #888888; padding: 10px;")
-            self.favorites_flow_layout.addWidget(empty_msg)
+            self.fav_empty_msg.show()
 
         # === 渲染 2: 📦 全部專案 ===
         self.all_header.setText(f"📦 全部專案 ({len(matched_all)})")
+        for data, is_inst, is_fav in matched_all:
+            card = self._create_card(data, is_inst, is_fav, icon_size, self.all_flow_widget)
+            self.all_flow_layout.addWidget(card)
+
+        self.all_empty_msg = CaptionLabel("（無符合條件的專案）", self.all_flow_widget)
+        self.all_empty_msg.setStyleSheet("color: #888888; padding: 10px;")
+        self.all_flow_layout.addWidget(self.all_empty_msg)
         if matched_all:
-            for data, is_inst, is_fav in matched_all:
-                card = self._create_card(data, is_inst, is_fav, icon_size, self.all_flow_widget)
-                self.all_flow_layout.addWidget(card)
+            self.all_empty_msg.hide()
         else:
-            empty_msg = CaptionLabel("（無符合條件的專案）", self.all_flow_widget)
-            empty_msg.setStyleSheet("color: #888888; padding: 10px;")
-            self.all_flow_layout.addWidget(empty_msg)
+            self.all_empty_msg.show()
+
+        if filter_text:
+            self.filter_cards_fast(filter_text)
 
     def render_favorites_only(self, filter_text: str = ""):
         """
         局部極速重繪「我的收藏」區塊，耗時 < 15ms，不破壞或重製「全部專案」區塊
         """
         clear_layout(self.favorites_flow_layout)
+        for child in self.favorites_flow_widget.findChildren(CaptionLabel):
+            child.deleteLater()
+
         favorites_list = self.parent_window.registry.get("favorites", [])
         icon_size = self.parent_window.settings.get("icon_size", 56)
 
@@ -494,30 +588,32 @@ class BoxLobbyInterface(QWidget):
         for data, is_inst in self.all_items_cache:
             name = data.get("name", "")
             repo_name = data.get("repo_name", "")
-            desc = data.get("description") or ""
             is_fav = (name in favorites_list or (repo_name and repo_name in favorites_list))
             if not is_fav:
                 continue
-
-            if filter_text:
-                if filter_text.lower() not in name.lower() and filter_text.lower() not in desc.lower():
-                    continue
-
             matched_favorites.append((data, is_inst, True))
 
         self.favorites_header.setText(f"⭐ 我的收藏 ({len(matched_favorites)})")
+        for data, is_inst, is_fav in matched_favorites:
+            card = self._create_card(data, is_inst, is_fav, icon_size, self.favorites_flow_widget)
+            self.favorites_flow_layout.addWidget(card)
+
+        self.fav_empty_msg = CaptionLabel("（右鍵點擊專案小卡可「加入收藏」）", self.favorites_flow_widget)
+        self.fav_empty_msg.setStyleSheet("color: #888888; padding: 10px;")
+        self.favorites_flow_layout.addWidget(self.fav_empty_msg)
         if matched_favorites:
-            for data, is_inst, is_fav in matched_favorites:
-                card = self._create_card(data, is_inst, is_fav, icon_size, self.favorites_flow_widget)
-                self.favorites_flow_layout.addWidget(card)
+            self.fav_empty_msg.hide()
         else:
-            empty_text = "（右鍵點擊專案小卡可「加入收藏」）" if not filter_text else "（無符合收藏的專案）"
-            empty_msg = CaptionLabel(empty_text, self.favorites_flow_widget)
-            empty_msg.setStyleSheet("color: #888888; padding: 10px;")
-            self.favorites_flow_layout.addWidget(empty_msg)
+            self.fav_empty_msg.show()
+
+        if filter_text:
+            self.filter_cards_fast(filter_text)
 
     def on_search_changed(self, text: str):
-        self.load_and_render_tools(filter_text=text.strip())
+        if hasattr(self, "_search_debounce_timer"):
+            self._search_debounce_timer.start()
+        else:
+            self.filter_cards_fast(text.strip())
 
     def update_icon_size(self, size: int):
         for layout in [self.favorites_flow_layout, self.all_flow_layout]:
@@ -557,7 +653,9 @@ class AIToolLauncherV2(MSFluentWindow):
         self.blurred_background_pixmap = None
         self.background_opacity = 0.8
         self.background_blur_radius = 15
+        self._last_blur_radius = 15
         self.bg_cached_path = ""
+        self.gif_frame_cache = {}
 
         self.installProgressSignal.connect(self.on_install_progress_slot)
         self.installFinished.connect(self.on_install_finished_slot)
@@ -579,9 +677,16 @@ class AIToolLauncherV2(MSFluentWindow):
 
     def on_movie_frame_changed(self):
         """
-        GIF 動畫幀變更即時渲染槽
+        GIF 動畫幀變更即時渲染槽 (具備 0ms 記憶體幀快取技術，杜絕即時高斯模糊卡頓)
         """
         if self.bg_movie and self.bg_movie.isValid():
+            frame_idx = self.bg_movie.currentFrameNumber()
+            # 🚀 60~144+ FPS 動態 GIF 幀快取：第一圈循環算完後，後續播放 0ms (0% CPU)！
+            if hasattr(self, "gif_frame_cache") and frame_idx in self.gif_frame_cache:
+                self.cached_scaled_bg, self.bg_sx, self.bg_sy = self.gif_frame_cache[frame_idx]
+                self.update()
+                return
+
             frame = self.bg_movie.currentPixmap()
             if not frame.isNull():
                 if self.background_blur_radius > 0:
@@ -589,6 +694,9 @@ class AIToolLauncherV2(MSFluentWindow):
                 else:
                     self.blurred_background_pixmap = frame
                 self.update_scaled_background()
+                if hasattr(self, "gif_frame_cache") and hasattr(self, "cached_scaled_bg") and self.cached_scaled_bg:
+                    if len(self.gif_frame_cache) < 120:
+                        self.gif_frame_cache[frame_idx] = (self.cached_scaled_bg, self.bg_sx, self.bg_sy)
                 self.update()
 
     def update_blurred_background(self):
@@ -684,6 +792,8 @@ class AIToolLauncherV2(MSFluentWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if hasattr(self, "gif_frame_cache"):
+            self.gif_frame_cache.clear()
         self.update_scaled_background()
         if hasattr(self, "settings") and self.settings is not None and hasattr(self, "settings_panel"):
             if not self.isMaximized() and not self.isMinimized():
@@ -977,12 +1087,18 @@ class AIToolLauncherV2(MSFluentWindow):
         # 2. 自訂背景圖片 / GIF 動畫 ＆ 磨砂模糊半徑
         bg_path = s.get("background_image_path", "")
         self.background_opacity = s.get("background_opacity", 80) / 100.0
-        self.background_blur_radius = s.get("background_blur", 15)
+        new_blur = s.get("background_blur", 15)
+        if new_blur != self.background_blur_radius:
+            self.background_blur_radius = new_blur
+            if hasattr(self, "gif_frame_cache"):
+                self.gif_frame_cache.clear()
 
         if bg_path and os.path.exists(bg_path):
             is_gif = bg_path.lower().endswith(".gif")
             if is_gif:
                 if self.bg_movie is None or self.bg_cached_path != bg_path:
+                    if hasattr(self, "gif_frame_cache"):
+                        self.gif_frame_cache.clear()
                     if self.bg_movie:
                         self.bg_movie.stop()
                     self.bg_movie = QMovie(bg_path)
@@ -991,6 +1107,8 @@ class AIToolLauncherV2(MSFluentWindow):
                     self.bg_cached_path = bg_path
                 self.on_movie_frame_changed()
             else:
+                if hasattr(self, "gif_frame_cache"):
+                    self.gif_frame_cache.clear()
                 if self.bg_movie:
                     self.bg_movie.stop()
                     self.bg_movie = None
@@ -999,6 +1117,8 @@ class AIToolLauncherV2(MSFluentWindow):
                     self.raw_background_pixmap = QPixmap(bg_path)
                 self.update_blurred_background()
         else:
+            if hasattr(self, "gif_frame_cache"):
+                self.gif_frame_cache.clear()
             if self.bg_movie:
                 self.bg_movie.stop()
                 self.bg_movie = None

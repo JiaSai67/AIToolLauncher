@@ -149,15 +149,29 @@ def fetch_github_repos(callback):
 
     threading.Thread(target=_fetch, daemon=True).start()
 
+_NO_ICON_REPOS = set()
+
+def clear_negative_icon_cache():
+    """
+    清除無圖示之負向快取標記（供使用者手動點擊重新整理時重試）
+    """
+    global _NO_ICON_REPOS
+    _NO_ICON_REPOS.clear()
+
 def get_cloud_icon_async(repo_name: str, cache_dir: str, on_icon_ready):
     """
-    非同步獲取 GitHub 雲端專案的圖示並快取至本地 (若已快取則靜默略過，0 額外耗時)
+    非同步獲取 GitHub 雲端專案的圖示並快取至本地 (若已快取或確認無圖示則靜默略過，0 額外耗時)
     """
-    if not repo_name:
+    if not repo_name or repo_name in _NO_ICON_REPOS:
         return
     os.makedirs(cache_dir, exist_ok=True)
     cached_file = os.path.join(cache_dir, f"{repo_name}.png")
     if os.path.exists(cached_file) and os.path.getsize(cached_file) > 0:
+        return
+
+    no_icon_file = os.path.join(cache_dir, f"{repo_name}.no_icon")
+    if os.path.exists(no_icon_file):
+        _NO_ICON_REPOS.add(repo_name)
         return
 
     candidate_raw_urls = [
@@ -177,10 +191,23 @@ def get_cloud_icon_async(repo_name: str, cache_dir: str, on_icon_ready):
                     if len(content) > 0:
                         with open(cached_file, "wb") as f:
                             f.write(content)
+                        if os.path.exists(no_icon_file):
+                            try:
+                                os.remove(no_icon_file)
+                            except Exception:
+                                pass
                         on_icon_ready(cached_file)
                         return
             except Exception:
                 continue
+
+        # 🚀 負向快取：若所有候選 URL 均無圖示，寫入標記避免後續重複發送無效網路請求
+        _NO_ICON_REPOS.add(repo_name)
+        try:
+            with open(no_icon_file, "w", encoding="utf-8") as f:
+                f.write("0")
+        except Exception:
+            pass
 
     threading.Thread(target=_task, daemon=True).start()
 

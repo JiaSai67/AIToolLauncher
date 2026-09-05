@@ -68,7 +68,7 @@ class SettingsPanel(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.enableTransparentBackground()
-        scroll.setScrollAnimation(Qt.Vertical, 160, QEasingCurve.OutQuad)
+        scroll.setScrollAnimation(Qt.Vertical, 120, QEasingCurve.OutQuad)
 
         container = QWidget()
         container.setStyleSheet("background: transparent;")
