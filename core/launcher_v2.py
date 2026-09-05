@@ -14,7 +14,7 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w")
 
-from PySide6.QtCore import Qt, QSize, Signal, QTimer, QEasingCurve
+from PySide6.QtCore import Qt, QSize, Signal, QTimer, QEasingCurve, QPoint
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QMovie
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.11"
+VERSION = "2.0.12"
 
 
 def set_native_topmost(window_obj, is_topmost: bool):
@@ -785,6 +785,13 @@ class AIToolLauncherV2(MSFluentWindow):
         self.titleBar.buttonLayout.insertWidget(0, self.pin_btn)
         self.update_pin_button_state()
 
+        # 標題文字與圖標標籤設置為鼠標穿透，確保游標點擊標題文字任何區域均由 Windows 原生標題列接管
+        if hasattr(self, "titleBar") and self.titleBar:
+            if hasattr(self.titleBar, "titleLabel") and self.titleBar.titleLabel:
+                self.titleBar.titleLabel.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            if hasattr(self.titleBar, "iconLabel") and self.titleBar.iconLabel:
+                self.titleBar.iconLabel.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
         self.apply_live_settings(self.settings)
 
         if self.settings.get("window_is_maximized", False):
@@ -853,6 +860,96 @@ class AIToolLauncherV2(MSFluentWindow):
 
         if self.is_topmost:
             set_native_topmost(self, True)
+
+    def nativeEvent(self, eventType, message):
+        """
+        Windows 原生訊息攔截器：
+        1. WM_NCHITTEST: 賦予標題列原生 HTCAPTION 屬性 (除右上角控制按鈕區外)，
+           由 Windows DWM 原生掌管拖曳、Aero Snap 貼齊與雙擊最大化，徹底根除 Win32 SC_MOVE 掉捕獲 (Capture) 鎖死卡死問題。
+        2. WM_ENTERSIZEMOVE (0x0231): 視窗開始拖曳/縮放時，暫停 GIF 動態桌布渲染，避免 GPU/DWM 隊列爭搶與掉幀。
+        3. WM_EXITSIZEMOVE (0x0232): 視窗移動/縮放結束時，恢復 GIF 播放，並即時持久化視窗大小。
+        """
+        if sys.platform == "win32":
+            try:
+                import win32con, win32gui, win32api
+                from ctypes import wintypes
+                msg = wintypes.MSG.from_address(message.__int__())
+
+                # 1. 視窗進入移動或拉伸縮放狀態
+                if msg.message == 0x0231:  # WM_ENTERSIZEMOVE
+                    if hasattr(self, "bg_movie") and self.bg_movie and self.bg_movie.isValid():
+                        if self.bg_movie.state() == QMovie.MovieState.Running:
+                            self._movie_was_running_before_move = True
+                            self.bg_movie.setPaused(True)
+                        else:
+                            self._movie_was_running_before_move = False
+                    return False, 0
+
+                # 2. 視窗結束移動或拉伸縮放狀態
+                elif msg.message == 0x0232:  # WM_EXITSIZEMOVE
+                    if hasattr(self, "bg_movie") and self.bg_movie and self.bg_movie.isValid():
+                        if getattr(self, "_movie_was_running_before_move", False):
+                            self.bg_movie.setPaused(False)
+                    if hasattr(self, "settings") and self.settings is not None and hasattr(self, "settings_panel"):
+                        if not self.isMaximized() and not self.isMinimized():
+                            self.settings["window_width"] = self.width()
+                            self.settings["window_height"] = self.height()
+                            self.settings_panel.save_settings()
+                    self.update()
+                    return False, 0
+
+                # 3. 視窗命中測試 (Hit Test) - 採用精準 lParam 解析 (支援負座標多螢幕)，徹底避開 GetCursorPos() 權限與卡頓問題
+                elif msg.message == win32con.WM_NCHITTEST:
+                    x = ctypes.c_short(msg.lParam & 0xFFFF).value
+                    y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
+                    xPos, yPos = win32gui.ScreenToClient(msg.hWnd, (x, y))
+                    clientRect = win32gui.GetClientRect(msg.hWnd)
+                    cw = clientRect[2] - clientRect[0]
+                    ch = clientRect[3] - clientRect[1]
+
+                    # 處理視窗 8 向邊框拉伸 (最大化時無邊框)
+                    bw = 0 if self.isMaximized() else 5
+                    if not self.isMaximized():
+                        lx = xPos < bw
+                        rx = xPos > cw - bw
+                        ty = yPos < bw
+                        by = yPos > ch - bw
+                        if lx and ty: return True, win32con.HTTOPLEFT
+                        elif rx and by: return True, win32con.HTBOTTOMRIGHT
+                        elif rx and ty: return True, win32con.HTTOPRIGHT
+                        elif lx and by: return True, win32con.HTBOTTOMLEFT
+                        elif ty: return True, win32con.HTTOP
+                        elif by: return True, win32con.HTBOTTOM
+                        elif lx: return True, win32con.HTLEFT
+                        elif rx: return True, win32con.HTRIGHT
+
+                    # 處理標題列拖曳與按鈕響應
+                    if hasattr(self, "titleBar") and self.titleBar and self.titleBar.isVisible():
+                        tb_h = self.titleBar.height()
+                        if 0 <= yPos <= tb_h and 0 <= xPos <= cw:
+                            pos = QPoint(xPos, yPos)
+                            buttons = []
+                            if hasattr(self, "pin_btn") and self.pin_btn:
+                                buttons.append(self.pin_btn)
+                            if hasattr(self.titleBar, "minBtn") and self.titleBar.minBtn:
+                                buttons.append(self.titleBar.minBtn)
+                            if hasattr(self.titleBar, "maxBtn") and self.titleBar.maxBtn:
+                                buttons.append(self.titleBar.maxBtn)
+                            if hasattr(self.titleBar, "closeBtn") and self.titleBar.closeBtn:
+                                buttons.append(self.titleBar.closeBtn)
+
+                            # 若游標位於右側按鈕區域，交還給 Qt 處理懸停動畫與點擊
+                            if any(btn.isVisible() and btn.geometry().contains(pos) for btn in buttons):
+                                return True, win32con.HTCLIENT
+
+                            # 其餘標題列區域 (含文字、圖標、中央空白) 一律由 Windows 原生 DWM 負責拖曳與雙擊
+                            return True, win32con.HTCAPTION
+
+                    return True, win32con.HTCLIENT
+            except Exception:
+                pass
+
+        return super().nativeEvent(eventType, message)
 
     def toggle_pin_topmost(self):
         self.is_topmost = not self.is_topmost
