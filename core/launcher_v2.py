@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.12"
+VERSION = "2.0.13"
 
 
 def set_native_topmost(window_obj, is_topmost: bool):
@@ -684,7 +684,10 @@ class AIToolLauncherV2(MSFluentWindow):
             # 🚀 60~144+ FPS 動態 GIF 幀快取：第一圈循環算完後，後續播放 0ms (0% CPU)！
             if hasattr(self, "gif_frame_cache") and frame_idx in self.gif_frame_cache:
                 self.cached_scaled_bg, self.bg_sx, self.bg_sy = self.gif_frame_cache[frame_idx]
-                self.update()
+                if getattr(self, "_is_in_sizemove", False):
+                    self.repaint()
+                else:
+                    self.update()
                 return
 
             frame = self.bg_movie.currentPixmap()
@@ -697,7 +700,10 @@ class AIToolLauncherV2(MSFluentWindow):
                 if hasattr(self, "gif_frame_cache") and hasattr(self, "cached_scaled_bg") and self.cached_scaled_bg:
                     if len(self.gif_frame_cache) < 120:
                         self.gif_frame_cache[frame_idx] = (self.cached_scaled_bg, self.bg_sx, self.bg_sy)
-                self.update()
+                if getattr(self, "_is_in_sizemove", False):
+                    self.repaint()
+                else:
+                    self.update()
 
     def update_blurred_background(self):
         """
@@ -875,21 +881,14 @@ class AIToolLauncherV2(MSFluentWindow):
                 from ctypes import wintypes
                 msg = wintypes.MSG.from_address(message.__int__())
 
-                # 1. 視窗進入移動或拉伸縮放狀態
+                # 1. 視窗進入移動或拉伸縮放狀態：標記狀態，保持動畫與專案持續運行，絕不暫停
                 if msg.message == 0x0231:  # WM_ENTERSIZEMOVE
-                    if hasattr(self, "bg_movie") and self.bg_movie and self.bg_movie.isValid():
-                        if self.bg_movie.state() == QMovie.MovieState.Running:
-                            self._movie_was_running_before_move = True
-                            self.bg_movie.setPaused(True)
-                        else:
-                            self._movie_was_running_before_move = False
+                    self._is_in_sizemove = True
                     return False, 0
 
-                # 2. 視窗結束移動或拉伸縮放狀態
+                # 2. 視窗結束移動或拉伸縮放狀態：解除標記，持久化保存最新視窗大小
                 elif msg.message == 0x0232:  # WM_EXITSIZEMOVE
-                    if hasattr(self, "bg_movie") and self.bg_movie and self.bg_movie.isValid():
-                        if getattr(self, "_movie_was_running_before_move", False):
-                            self.bg_movie.setPaused(False)
+                    self._is_in_sizemove = False
                     if hasattr(self, "settings") and self.settings is not None and hasattr(self, "settings_panel"):
                         if not self.isMaximized() and not self.isMinimized():
                             self.settings["window_width"] = self.width()
