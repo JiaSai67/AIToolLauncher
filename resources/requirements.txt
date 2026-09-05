@@ -1,3 +1,7 @@
-# AI Tool Launcher 目前為輕量化設計，所有功能皆使用 Python 內建標準函式庫完成
-# 包含介面 (tkinter) 與進程管理 (subprocess) 等。
-# 未來若新增外部套件依賴，請將套件名稱加入此檔案中，啟動時會自動安裝。
+# AI Tool Launcher 2.0 現代化介面與核心套件依賴
+PySide6>=6.5.0
+PySide6-Fluent-Widgets>=1.5.0
+PySideSix-Frameless-Window>=0.3.0
+pywin32
+requests
+

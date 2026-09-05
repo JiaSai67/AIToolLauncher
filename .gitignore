@@ -5,3 +5,4 @@ resources/config/
 resources/cache/
 .scratch/
 *.log
+AIToolLauncher_Setup.exe

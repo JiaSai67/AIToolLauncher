@@ -305,7 +305,7 @@ namespace AIToolLauncherSetup
                             psi.CreateNoWindow = true;
                             Process p = Process.Start(psi);
                             p.WaitForExit();
-                            success = (p.ExitCode == 0) && File.Exists(Path.Combine(installDir, "core", "launcher.py"));
+                            success = (p.ExitCode == 0) && (File.Exists(Path.Combine(installDir, "core", "launcher_v2.py")) || File.Exists(Path.Combine(installDir, "core", "launcher.py")));
                         }
 
                         if (!success)
@@ -334,15 +334,76 @@ namespace AIToolLauncherSetup
                             try { Directory.Delete(extractTemp, true); } catch { }
                         }
 
-                        SetProgress(100);
-                        SetStatus("🎉 下載與安裝完成！正在自動啟動 AI Tool Launcher...", Color.LimeGreen);
-                        Log("🎉 【安裝成功】AI Tool Launcher 已成功安裝到目標目錄！", Color.LimeGreen);
+                        // 正在安裝/補全現代化介面環境依賴 (PySide6 / FluentWidgets 等)
+                        string reqFile = Path.Combine(installDir, "resources", "requirements.txt");
+                        if (File.Exists(reqFile))
+                        {
+                            SetStatus("正在配置 AI Tool Launcher 2.0 依賴環境 (PySide6 / FluentWidgets)...", Color.Yellow);
+                            Log("⏳ 正在執行 pip install 安裝現代化介面套件，請稍候...", Color.Cyan);
+                            try
+                            {
+                                ProcessStartInfo pipPsi = new ProcessStartInfo("python", string.Format("-m pip install -r \"{0}\"", reqFile));
+                                pipPsi.WorkingDirectory = installDir;
+                                pipPsi.UseShellExecute = false;
+                                pipPsi.CreateNoWindow = true;
+                                Process pipP = Process.Start(pipPsi);
+                                pipP.WaitForExit();
+                                Log("✅ 介面依賴套件配置完成！", Color.LimeGreen);
+                            }
+                            catch (Exception pipEx)
+                            {
+                                Log("⚠️ 依賴套件配置警告: " + pipEx.Message, Color.Yellow);
+                            }
+                        }
 
-                        SendWebhookNotification("🚀 AIToolLauncher 安裝完成並啟動", string.Format("安裝路徑: {0}", installDir), 0x2ECC71);
+                        // 自動建立桌面捷徑
+                        string launcherExe = Path.Combine(installDir, "AIToolLauncher.exe");
+                        string coreLauncherV2Py = Path.Combine(installDir, "core", "launcher_v2.py");
+                        string coreLauncherPy = Path.Combine(installDir, "core", "launcher.py");
+
+                        try
+                        {
+                            string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                            string shortcutPath = Path.Combine(desktop, "AI Tool Launcher.lnk");
+                            string targetPath = File.Exists(launcherExe) ? launcherExe : Path.Combine(installDir, "啟動_AIToolLauncher.bat");
+                            string iconPath = Path.Combine(installDir, "resources", "icon.ico");
+                            string psScript = string.Format(
+                                "$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('{0}'); $Shortcut.TargetPath = '{1}'; $Shortcut.WorkingDirectory = '{2}'; if (Test-Path '{3}') {{ $Shortcut.IconLocation = '{3}' }}; $Shortcut.Save()",
+                                shortcutPath, targetPath, installDir, iconPath
+                            );
+                            ProcessStartInfo psPsi = new ProcessStartInfo("powershell", "-NoProfile -ExecutionPolicy Bypass -Command \"" + psScript.Replace("\"", "\\\"") + "\"");
+                            psPsi.CreateNoWindow = true;
+                            psPsi.UseShellExecute = false;
+                            Process ps = Process.Start(psPsi);
+                            ps.WaitForExit(3000);
+                            Log("✨ 已為您建立桌面捷徑：AI Tool Launcher", Color.LimeGreen);
+                        }
+                        catch { }
+
+                        SetProgress(100);
+                        SetStatus("🎉 下載與安裝完成！正在自動啟動 AI Tool Launcher 2.0...", Color.LimeGreen);
+                        Log("🎉 【安裝成功】AI Tool Launcher 2.0 已成功安裝到目標目錄！", Color.LimeGreen);
+
+                        SendWebhookNotification("🚀 AIToolLauncher 2.0 安裝完成並啟動", string.Format("安裝路徑: {0}", installDir), 0x2ECC71);
 
                         // 自動啟動
-                        string coreLauncherPy = Path.Combine(installDir, "core", "launcher.py");
-                        if (File.Exists(coreLauncherPy))
+                        if (File.Exists(launcherExe))
+                        {
+                            Log("🚀 正在啟動 AI Tool Launcher 2.0 主程式...", Color.Cyan);
+                            ProcessStartInfo psi = new ProcessStartInfo(launcherExe);
+                            psi.WorkingDirectory = installDir;
+                            psi.UseShellExecute = true;
+                            Process.Start(psi);
+                        }
+                        else if (File.Exists(coreLauncherV2Py))
+                        {
+                            Log("🚀 正在啟動 AI Tool Launcher 2.0 介面...", Color.Cyan);
+                            ProcessStartInfo psi = new ProcessStartInfo("pythonw", string.Format("\"{0}\"", coreLauncherV2Py));
+                            psi.WorkingDirectory = installDir;
+                            psi.UseShellExecute = true;
+                            Process.Start(psi);
+                        }
+                        else if (File.Exists(coreLauncherPy))
                         {
                             Log("🚀 正在啟動 AI Tool Launcher 主介面...", Color.Cyan);
                             ProcessStartInfo psi = new ProcessStartInfo("pythonw", string.Format("\"{0}\"", coreLauncherPy));
@@ -351,7 +412,7 @@ namespace AIToolLauncherSetup
                             Process.Start(psi);
                         }
 
-                        MessageBox.Show(string.Format("AI Tool Launcher 已成功下載並安裝至：\n{0}\n\n已為您啟動主程式！", installDir), "安裝完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        MessageBox.Show(string.Format("AI Tool Launcher 2.0 已成功下載並安裝至：\n{0}\n\n已為您在桌面建立捷徑並啟動主程式！", installDir), "安裝完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
                     catch (Exception ex)
                     {

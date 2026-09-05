@@ -11,6 +11,33 @@ import shutil
 import re
 import traceback
 import importlib.metadata
+
+# -------------------------------------------------------------
+# AI Tool Launcher 2.0 自動橋接轉發 (Bridge to v2.0)
+# 若本機環境已具備 launcher_v2.py 與 PySide6，無縫轉發至 2.0 現代化介面
+# -------------------------------------------------------------
+_root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_v2_exe = os.path.join(_root_dir, "AIToolLauncher.exe")
+_v2_py = os.path.join(_root_dir, "core", "launcher_v2.py")
+
+if os.path.exists(_v2_exe) or os.path.exists(_v2_py):
+    try:
+        import PySide6
+        import qfluentwidgets
+        if os.path.exists(_v2_exe):
+            subprocess.Popen([_v2_exe], cwd=_root_dir)
+            sys.exit(0)
+        else:
+            _pyw = sys.executable
+            if _pyw.lower().endswith("python.exe"):
+                _pyw = _pyw[:-10] + "pythonw.exe"
+            if not os.path.exists(_pyw):
+                _pyw = sys.executable
+            subprocess.Popen([_pyw, _v2_py], cwd=_root_dir)
+            sys.exit(0)
+    except ImportError:
+        pass
+
 try:
     from core.theme_utils import get_theme_colors
 except ModuleNotFoundError:
@@ -21,7 +48,8 @@ try:
 except ModuleNotFoundError:
     from identity_manager import get_client_identity, get_webhook_url, check_blacklist, enforce_blacklist_destruction
 
-VERSION = "1.0.52"
+VERSION = "1.0.53"
+
 
 if not os.path.basename(sys.executable).lower().startswith("python"):
     PYTHON_CMD = "python"
@@ -421,47 +449,75 @@ class ToolLauncherApp(tk.Tk):
         
     def check_launcher_update(self):
         """
-        啟動器版本檢測：只要偵測到新版本，直接自動更新並重啟，無需手動點擊
+        啟動器版本檢測：只要偵測到新版本或本機存在 2.0 核心但缺少依賴，直接自動升級並無縫轉發
         """
         def task():
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
                 cwd = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                local = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cwd, creationflags=flags, text=True).strip()
-                remote_out = subprocess.check_output(["git", "ls-remote", "origin", "-h", "refs/heads/main"], cwd=cwd, creationflags=flags, text=True).strip()
-                if remote_out:
-                    remote = remote_out.split()[0]
-                    if local and remote and local != remote:
-                        self.after(0, lambda: self.set_status_message("狀態: 🚀 偵測到啟動器新版本，正在全自動更新中..."))
+                v2_py = os.path.join(cwd, "core", "launcher_v2.py")
+                v2_exe = os.path.join(cwd, "AIToolLauncher.exe")
+
+                # 若已存在 2.0 但尚未安裝 PySide6 依賴，直接喚起自動安裝
+                if os.path.exists(v2_py) or os.path.exists(v2_exe):
+                    has_pyside = False
+                    try:
+                        import PySide6, qfluentwidgets
+                        has_pyside = True
+                    except ImportError:
+                        pass
+                    if not has_pyside:
+                        self.after(0, lambda: self.set_status_message("狀態: 🚀 偵測到 AI Tool Launcher 2.0 核心，正在配置依賴環境..."))
                         self.after(0, self.do_launcher_update)
+                        return
+
+                if os.path.exists(os.path.join(cwd, ".git")):
+                    local = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cwd, creationflags=flags, text=True).strip()
+                    remote_out = subprocess.check_output(["git", "ls-remote", "origin", "-h", "refs/heads/main"], cwd=cwd, creationflags=flags, text=True).strip()
+                    if remote_out:
+                        remote = remote_out.split()[0]
+                        if local and remote and local != remote:
+                            self.after(0, lambda: self.set_status_message("狀態: 🚀 偵測到啟動器新版本，正在全自動更新至 2.0..."))
+                            self.after(0, self.do_launcher_update)
             except: pass
         threading.Thread(target=task, daemon=True).start()
         
     def do_launcher_update(self):
-        self.btn_update_launcher.config(text="⏳ 正在全自動更新啟動器...", state=tk.DISABLED)
+        self.btn_update_launcher.config(text="⏳ 正在升級至 AI Tool Launcher 2.0 並補齊現代化環境...", state=tk.DISABLED)
         self.launcher_update_frame.pack(fill=tk.X, before=self.notebook)
         def task():
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
                 cwd = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                subprocess.run(["git", "fetch", "origin", "main"], cwd=cwd, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                p = subprocess.Popen(["git", "reset", "--hard", "origin/main"], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
-                p.wait()
-                if p.returncode == 0:
-                    self.after(0, self.launcher_update_frame.pack_forget)
-                    self.after(0, self.restart_launcher)
-                else:
-                    self.after(0, lambda: self.set_status_message("狀態: 🔴 啟動器自動更新失敗，請檢查網路連線"))
+                
+                # 1. 若為 Git 專案，拉取遠端最新代碼
+                if os.path.exists(os.path.join(cwd, ".git")):
+                    subprocess.run(["git", "fetch", "origin", "main"], cwd=cwd, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    p = subprocess.Popen(["git", "reset", "--hard", "origin/main"], cwd=cwd, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                    p.wait()
+
+                # 2. 自動安裝 / 補全 v2.0 所需依賴 (PySide6, qfluentwidgets, pywin32 等)
+                req_path = os.path.join(cwd, "resources", "requirements.txt")
+                if os.path.exists(req_path):
+                    self.after(0, lambda: self.set_status_message("狀態: 📦 正在安裝/補全 AI Tool Launcher 2.0 現代化介面環境 (PySide6)..."))
+                    pip_cmd = [sys.executable, "-m", "pip", "install", "-r", req_path]
+                    subprocess.run(pip_cmd, cwd=cwd, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+                self.after(0, self.launcher_update_frame.pack_forget)
+                self.after(0, self.restart_launcher)
             except Exception as e:
                 self.after(0, lambda: self.set_status_message(f"狀態: 🔴 啟動器更新異常: {e}"))
             finally:
-                self.after(0, lambda: self.btn_update_launcher.config(text="✨ 啟動器有新版本，正在自動更新中...", state=tk.NORMAL))
+                self.after(0, lambda: self.btn_update_launcher.config(text="✨ 升級程序執行完畢", state=tk.NORMAL))
         threading.Thread(target=task, daemon=True).start()
 
     def restart_launcher(self):
         import tempfile
         bat_path = os.path.join(tempfile.gettempdir(), "restart_launcher.bat")
         cwd = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        v2_exe = os.path.join(cwd, "AIToolLauncher.exe")
+        v2_py = os.path.join(cwd, "core", "launcher_v2.py")
+
         with open(bat_path, "w", encoding="utf-8") as f:
             launcher_cmd = PYTHON_CMD
             if launcher_cmd.lower().endswith("python.exe"):
@@ -472,7 +528,12 @@ class ToolLauncherApp(tk.Tk):
             f.write("@echo off\n")
             f.write("timeout /t 1 /nobreak >nul\n")
             f.write(f"cd /d \"{cwd}\"\n")
-            f.write(f"start \"\" \"{launcher_cmd}\" core\\launcher.py\n")
+            if os.path.exists(v2_exe):
+                f.write("start \"\" \"AIToolLauncher.exe\"\n")
+            elif os.path.exists(v2_py):
+                f.write(f"start \"\" \"{launcher_cmd}\" core\\launcher_v2.py\n")
+            else:
+                f.write(f"start \"\" \"{launcher_cmd}\" core\\launcher.py\n")
             f.write("del \"%~f0\"\n")
         subprocess.Popen([bat_path], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000))
         self.destroy()
