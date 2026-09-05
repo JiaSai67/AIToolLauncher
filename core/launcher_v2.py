@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.13"
+VERSION = "2.0.14"
 
 
 def set_native_topmost(window_obj, is_topmost: bool):
@@ -684,10 +684,7 @@ class AIToolLauncherV2(MSFluentWindow):
             # 🚀 60~144+ FPS 動態 GIF 幀快取：第一圈循環算完後，後續播放 0ms (0% CPU)！
             if hasattr(self, "gif_frame_cache") and frame_idx in self.gif_frame_cache:
                 self.cached_scaled_bg, self.bg_sx, self.bg_sy = self.gif_frame_cache[frame_idx]
-                if getattr(self, "_is_in_sizemove", False):
-                    self.repaint()
-                else:
-                    self.update()
+                self.update()
                 return
 
             frame = self.bg_movie.currentPixmap()
@@ -700,10 +697,7 @@ class AIToolLauncherV2(MSFluentWindow):
                 if hasattr(self, "gif_frame_cache") and hasattr(self, "cached_scaled_bg") and self.cached_scaled_bg:
                     if len(self.gif_frame_cache) < 120:
                         self.gif_frame_cache[frame_idx] = (self.cached_scaled_bg, self.bg_sx, self.bg_sy)
-                if getattr(self, "_is_in_sizemove", False):
-                    self.repaint()
-                else:
-                    self.update()
+                self.update()
 
     def update_blurred_background(self):
         """
@@ -926,6 +920,10 @@ class AIToolLauncherV2(MSFluentWindow):
                     if hasattr(self, "titleBar") and self.titleBar and self.titleBar.isVisible():
                         tb_h = self.titleBar.height()
                         if 0 <= yPos <= tb_h and 0 <= xPos <= cw:
+                            # 🚀 極速快路徑：若游標在標題列左半部或中段 (非右側按鈕區)，0ms 直接回傳原生拖曳，杜絕逐像素命中遍歷開銷
+                            if xPos < cw - 185:
+                                return True, win32con.HTCAPTION
+
                             pos = QPoint(xPos, yPos)
                             buttons = []
                             if hasattr(self, "pin_btn") and self.pin_btn:
@@ -944,7 +942,8 @@ class AIToolLauncherV2(MSFluentWindow):
                             # 其餘標題列區域 (含文字、圖標、中央空白) 一律由 Windows 原生 DWM 負責拖曳與雙擊
                             return True, win32con.HTCAPTION
 
-                    return True, win32con.HTCLIENT
+                    # 非標題列與非邊框之一般客戶區內容，直接返回 False, 0 交由 Qt 原生平台處理，完全避開 qframelesswindow 內部 GetCursorPos() 存取拒絕崩潰
+                    return False, 0
             except Exception:
                 pass
 
