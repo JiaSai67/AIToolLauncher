@@ -12,6 +12,7 @@ from qfluentwidgets import (
 
 class SettingsPanel(QWidget):
     settingsChanged = Signal(dict)
+    checkUpdateRequested = Signal()
 
     def __init__(self, settings_file: str, parent=None):
         super().__init__(parent)
@@ -128,9 +129,37 @@ class SettingsPanel(QWidget):
         self.theme_card = self.create_theme_card()
         c_layout.addWidget(self.theme_card)
 
+        # 7. 🚀 關於與版本更新 Card
+        self.update_card = self.create_update_card()
+        c_layout.addWidget(self.update_card)
+
         c_layout.addStretch(1)
         scroll.setWidget(container)
         main_layout.addWidget(scroll)
+
+    def create_update_card(self) -> CardWidget:
+        card = CardWidget(self)
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(12)
+
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(4)
+        t_label = StrongBodyLabel("🚀 軟體版本與更新 (AIToolLauncher 2.0)", card)
+        d_label = CaptionLabel("目前版本：v2.0.14 | 點擊右側按鈕可即時檢查 GitHub 主倉庫最新版本", card)
+        info_layout.addWidget(t_label)
+        info_layout.addWidget(d_label)
+
+        layout.addLayout(info_layout)
+        layout.addStretch(1)
+
+        self.btn_check_update = PushButton("檢查更新", card)
+        self.btn_check_update.setIcon(FluentIcon.SYNC)
+        self.btn_check_update.setFixedWidth(120)
+        self.btn_check_update.clicked.connect(self.checkUpdateRequested.emit)
+        layout.addWidget(self.btn_check_update)
+
+        return card
 
     def create_background_image_card(self) -> CardWidget:
         card = CardWidget(self)
