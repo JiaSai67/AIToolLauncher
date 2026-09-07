@@ -22,9 +22,9 @@ def get_silent_flags_and_startupinfo():
 
 def force_remove_directory(path: str):
     """
-    100% 純 Python 記憶體原生刪除目錄與唯讀/.git屬性檔案，零進程生成，絕無任何終端視窗/白窗閃爍
+    強固移除目錄與其內部所有唯讀、隱藏與 .git 屬性檔案 (Windows 強化相容)
     """
-    if not os.path.exists(path):
+    if not path or not os.path.exists(path):
         return
 
     def remove_readonly(func, p, exc_info):
@@ -51,13 +51,38 @@ def force_remove_directory(path: str):
             except Exception:
                 pass
 
-    # 2. 最終目錄清除
+    # 2. 最終目錄清除 (shutil.rmtree)
     try:
         if os.path.exists(path):
             os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
             shutil.rmtree(path, onerror=remove_readonly)
     except Exception:
         pass
+
+    # 3. Windows 原生 rd /s /q 最終保障 (若目錄依然殘留，利用原生命令徹底粉碎，零黑窗閃爍)
+    if os.path.exists(path) and sys.platform == "win32":
+        try:
+            flags, startupinfo = get_silent_flags_and_startupinfo()
+            subprocess.run(
+                f'attrib -r -s -h "{path}\\*.*" /s /d',
+                shell=True,
+                creationflags=flags,
+                startupinfo=startupinfo,
+                timeout=4,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            subprocess.run(
+                f'cmd.exe /c rd /s /q "{path}"',
+                shell=True,
+                creationflags=flags,
+                startupinfo=startupinfo,
+                timeout=5,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        except Exception:
+            pass
 
 def parse_linkme(target_dir: str) -> dict:
     """

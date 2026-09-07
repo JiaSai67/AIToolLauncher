@@ -1955,11 +1955,37 @@ class AIToolLauncherV2(MSFluentWindow):
         wdir = tool_data.get("working_dir", "")
         
         display_name = name or repo_name or "小工具"
-        is_cloud = "cloudtools" in wdir.lower()
+
+        # 精準識別雲端目錄位置 (支援大小寫無關比對與缺少 wdir 時之自動補全)
+        cloud_base_norm = os.path.normcase(os.path.abspath(self.cloud_tools_dir))
+        
+        if not wdir and repo_name:
+            cand = os.path.join(self.cloud_tools_dir, repo_name)
+            if os.path.exists(cand):
+                wdir = cand
+
+        is_cloud = False
+        target_del_dir = None
+        if wdir:
+            norm_wdir = os.path.normcase(os.path.abspath(wdir))
+            if "cloudtools" in norm_wdir or norm_wdir.startswith(cloud_base_norm):
+                is_cloud = True
+                # 安全驗證：必須確保要刪除的目錄嚴格位於 CloudTools 目錄內部，且不等於 CloudTools 本身
+                if norm_wdir.startswith(cloud_base_norm) and len(norm_wdir) > len(cloud_base_norm):
+                    target_del_dir = os.path.abspath(wdir)
+                else:
+                    sub_cand = os.path.join(self.cloud_tools_dir, os.path.basename(wdir))
+                    if os.path.exists(sub_cand):
+                        target_del_dir = os.path.abspath(sub_cand)
+        elif repo_name:
+            sub_cand = os.path.join(self.cloud_tools_dir, repo_name)
+            if os.path.exists(sub_cand):
+                is_cloud = True
+                target_del_dir = os.path.abspath(sub_cand)
 
         if is_cloud:
             dlg_title = f"🗑️ 確認解除安裝 【{display_name}】"
-            dlg_msg = f"您確定要解除安裝雲端工具 【{display_name}】 嗎？\n\n這將重置其為「未安裝」狀態並清理 CloudTools 下載資料夾。"
+            dlg_msg = f"您確定要解除安裝雲端工具 【{display_name}】 嗎？\n\n這將重置其為「未安裝」狀態並徹底清理 CloudTools 資料夾。"
         else:
             dlg_title = f"❌ 從清單移除 【{display_name}】"
             dlg_msg = f"您確定要將 【{display_name}】 從收納盒清單中移除嗎？\n\n【重要提示】此操作僅從啟動器移除捷徑，您的本地專案原始碼、開發數據與檔案將 100% 完整保留，絕不會被刪除。"
@@ -1968,17 +1994,39 @@ class AIToolLauncherV2(MSFluentWindow):
         if not w.exec():
             return
 
+        # 0. 若該工具目前正在運行，強制關閉進程以防 Windows 鎖死檔案造成刪除失敗
+        for p_key in [name, repo_name, (os.path.basename(wdir) if wdir else "")]:
+            if p_key and p_key in self.running_processes:
+                info = self.running_processes.pop(p_key, None)
+                proc = info.get("proc") if info else None
+                if proc:
+                    try:
+                        proc.terminate()
+                        proc.kill()
+                    except Exception:
+                        pass
+
+        # 0.1 若該工具有待更新紀錄，立即清除
+        for k in [name, repo_name, (os.path.basename(wdir) if wdir else "")]:
+            if k and k in self.tools_with_updates:
+                self.tools_with_updates.pop(k, None)
+
         # 1. 主線程立即同步更新記憶體註冊表 (0ms 無延遲，以實體路徑精準過濾，絕不波及本地開發專案)
         if is_cloud:
-            target_cloud_dir = os.path.normpath(wdir).lower()
+            target_cloud_dir = os.path.normcase(os.path.abspath(wdir)) if wdir else ""
             self.registry["tools"] = [
                 t for t in self.registry.get("tools", [])
-                if os.path.normpath(t.get("working_dir", "")).lower() != target_cloud_dir
+                if not (
+                    (target_cloud_dir and os.path.normcase(os.path.abspath(t.get("working_dir", ""))) == target_cloud_dir)
+                    or (repo_name and t.get("repo_name", "").lower() == repo_name.lower())
+                    or (name and t.get("name", "").lower() == name.lower() and "cloudtools" in os.path.normcase(t.get("working_dir", "")))
+                )
             ]
             # 若雲端項目在收藏清單中，僅移除該雲端名稱 (保留本地開發版)
             favs = self.registry.setdefault("favorites", [])
-            if name in favs and name != "Steam Manifest - 本地開發版":
-                favs.remove(name)
+            for fn in [name, repo_name]:
+                if fn and fn in favs and fn != "Steam Manifest - 本地開發版":
+                    favs.remove(fn)
         else:
             target_local_dir = os.path.normpath(wdir).lower()
             target_local_exe = os.path.normpath(tool_data.get("executable", "")).lower()
@@ -1994,7 +2042,7 @@ class AIToolLauncherV2(MSFluentWindow):
 
         # 2. 🚀 0ms 就地精準狀態切換 (In-Place Fast Update，完全不重構銷毀元件，100% 絲滑零卡頓)
         if is_cloud:
-            target_cloud_dir = os.path.normpath(wdir).lower()
+            target_cloud_dir = os.path.normcase(os.path.abspath(wdir)) if wdir else ""
             for i in range(self.box_lobby.all_flow_layout.count()):
                 item = self.box_lobby.all_flow_layout.itemAt(i)
                 w = item.widget() if item else None
@@ -2003,15 +2051,19 @@ class AIToolLauncherV2(MSFluentWindow):
                     w_repo = w.data.get("repo_name", "")
                     w_wdir = w.data.get("working_dir", "")
                     matches = False
-                    if w_wdir and target_cloud_dir == os.path.normpath(w_wdir).lower():
+                    if w_wdir and target_cloud_dir and os.path.normcase(os.path.abspath(w_wdir)) == target_cloud_dir:
                         matches = True
                     elif repo_name and w_repo and repo_name.lower() == w_repo.lower():
                         matches = True
                     elif repo_name and w_name and repo_name.lower() == w_name.lower():
                         matches = True
+                    elif name and w_name and name.lower() == w_name.lower() and "cloudtools" in os.path.normcase(w_wdir):
+                        matches = True
 
                     if matches:
                         w.is_installed = False
+                        w.has_update = False
+                        w.update_info = {}
                         w.data["repo_name"] = repo_name or (os.path.basename(wdir) if wdir else "")
                         w.apply_state(ToolCardWidget.STATE_IDLE)
                         w.update_tooltip()
@@ -2020,13 +2072,15 @@ class AIToolLauncherV2(MSFluentWindow):
         else:
             self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
 
-        # 3. 若為雲端專案，在背景線程靜默清理本機檔案資料夾 (本地開發專案絕對不碰！)
-        if is_cloud and wdir and os.path.exists(wdir) and os.path.abspath(wdir).startswith(os.path.abspath(self.cloud_tools_dir)):
-            threading.Thread(target=lambda: force_remove_directory(wdir), daemon=True).start()
+        # 3. 若為雲端專案，在背景線程徹底粉碎清理本機 CloudTools 資料夾 (本地開發專案絕對不碰！)
+        if is_cloud and target_del_dir and os.path.exists(target_del_dir):
+            def _clean_task(del_path=target_del_dir):
+                force_remove_directory(del_path)
+            threading.Thread(target=_clean_task, daemon=True).start()
 
         InfoBar.success(
-            title="🗑️ 已移除雲端小工具" if is_cloud else "❌ 已從清單移除",
-            content=f"已成功解除安裝 【{display_name}】" if is_cloud else f"已將 【{display_name}】 從收納盒清單移除（本地檔案完整保留）",
+            title="🗑️ 已解除安裝雲端小工具" if is_cloud else "❌ 已從清單移除",
+            content=f"已成功解除安裝 【{display_name}】 並清理檔案" if is_cloud else f"已將 【{display_name}】 從收納盒清單移除（本地檔案完整保留）",
             orient=Qt.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP,
