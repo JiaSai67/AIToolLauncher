@@ -84,7 +84,18 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.16"
+VERSION = "2.0.17"
+
+
+def parse_version_tuple(v_str: str) -> tuple:
+    """
+    將語意化版本字串 (如 'v2.0.16', '2.0.16', 'v1.2.3.4') 解析為可比對大小的整數元組
+    例如: 'v2.0.16' -> (2, 0, 16)
+    """
+    if not v_str:
+        return (0, 0, 0)
+    nums = re.findall(r'\d+', str(v_str))
+    return tuple(int(x) for x in nums) if nums else (0, 0, 0)
 
 
 def resolve_semantic_version(wdir: str, ref: str = "HEAD") -> str:
@@ -846,7 +857,7 @@ class AIToolLauncherV2(MSFluentWindow):
         painter.end()
 
     def init_settings(self):
-        self.settings_panel = SettingsPanel(self.settings_file, self)
+        self.settings_panel = SettingsPanel(self.settings_file, version=VERSION, parent=self)
         self.settings = self.settings_panel.settings
         self.settings_panel.settingsChanged.connect(self.apply_live_settings)
         self.settings_panel.checkUpdateRequested.connect(lambda: self.check_launcher_update_async(manual=True))
@@ -1856,7 +1867,7 @@ class AIToolLauncherV2(MSFluentWindow):
     def check_launcher_update_async(self, manual: bool = False):
         """
         在背景異步檢測 AIToolLauncher 主程式是否有新版本 (GitHub origin/main)
-        比對語意化版本號 (vX.X.XX)，拒絕不直觀的 commit hash
+        嚴格比對語意化版本號 (vX.X.XX)，只有遠端版本號嚴格大於本機版本號時才提示更新！
         """
         base_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if not os.path.exists(os.path.join(base_root, ".git")):
@@ -1878,19 +1889,23 @@ class AIToolLauncherV2(MSFluentWindow):
                 # 靜默抓取遠端最新 main 分支狀態
                 subprocess.run(
                     ["git", "fetch", "origin", "main", "--quiet"],
-                    cwd=base_root, creationflags=flags, timeout=12,
+                    cwd=base_root, creationflags=flags, timeout=15,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
-                local_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=base_root, creationflags=flags, text=True).strip()
-                remote_hash = subprocess.check_output(["git", "rev-parse", "origin/main"], cwd=base_root, creationflags=flags, text=True).strip()
 
-                if local_hash and remote_hash and local_hash != remote_hash:
-                    local_ver = f"v{VERSION}"
-                    remote_ver = resolve_semantic_version(base_root, "origin/main")
-                    if remote_ver == local_ver:
-                        remote_ver = f"{local_ver}-patch"
+                local_ver_str = f"v{VERSION}"
+                local_tuple = parse_version_tuple(VERSION)
 
-                    self.launcherUpdateAvailable.emit(remote_ver, local_ver)
+                # 解析遠端最新版本號 (優先由 origin/main 解析，若未更新則嘗試 FETCH_HEAD)
+                remote_ver_str = resolve_semantic_version(base_root, "origin/main")
+                if not remote_ver_str or remote_ver_str == "v1.0.0":
+                    remote_ver_str = resolve_semantic_version(base_root, "FETCH_HEAD")
+
+                remote_tuple = parse_version_tuple(remote_ver_str)
+
+                # 核心防護：只有當「遠端版本號」嚴格大於「本機目前版本號」時，才判定為有新版本！
+                if remote_tuple > local_tuple:
+                    self.launcherUpdateAvailable.emit(remote_ver_str, local_ver_str)
                     return
 
                 if manual:
@@ -1902,6 +1917,15 @@ class AIToolLauncherV2(MSFluentWindow):
         threading.Thread(target=_task, daemon=True).start()
 
     def on_launcher_update_available_slot(self, remote_ver: str, local_ver: str):
+        # 單例防重疊保護：關閉已存在的提示條，避免多個橫幅疊加
+        existing_bar = getattr(self, "_launcher_update_bar", None)
+        if existing_bar is not None:
+            try:
+                existing_bar.close()
+            except Exception:
+                pass
+            self._launcher_update_bar = None
+
         bar = InfoBar(
             icon=FluentIcon.SYNC,
             title="✨ 發現 AIToolLauncher 主程式新版本！",
@@ -1917,6 +1941,7 @@ class AIToolLauncherV2(MSFluentWindow):
         update_btn.clicked.connect(lambda: [bar.close(), self.do_launcher_update()])
         bar.addWidget(update_btn)
         bar.show()
+        self._launcher_update_bar = bar
 
     def on_launcher_update_status_slot(self, status_type: str, msg: str):
         if status_type == "ALREADY_LATEST":

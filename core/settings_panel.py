@@ -14,9 +14,10 @@ class SettingsPanel(QWidget):
     settingsChanged = Signal(dict)
     checkUpdateRequested = Signal()
 
-    def __init__(self, settings_file: str, parent=None):
+    def __init__(self, settings_file: str, version: str = "2.0.17", parent=None):
         super().__init__(parent)
         self.setObjectName("settingsInterface")
+        self.version = version
         self.settings_file = settings_file
         self.settings = self.load_settings()
         self.init_ui()
@@ -146,7 +147,7 @@ class SettingsPanel(QWidget):
         info_layout = QVBoxLayout()
         info_layout.setSpacing(4)
         t_label = StrongBodyLabel("🚀 軟體版本與更新 (AIToolLauncher 2.0)", card)
-        d_label = CaptionLabel("目前版本：v2.0.16 | 點擊右側按鈕可即時檢查 GitHub 主倉庫最新版本", card)
+        d_label = CaptionLabel(f"目前版本：v{self.version} | 點擊右側按鈕可即時檢查 GitHub 主倉庫最新版本", card)
         info_layout.addWidget(t_label)
         info_layout.addWidget(d_label)
 
