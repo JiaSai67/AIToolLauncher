@@ -84,7 +84,80 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.15"
+VERSION = "2.0.16"
+
+
+def resolve_semantic_version(wdir: str, ref: str = "HEAD") -> str:
+    """
+    智能解析專案或主程式在指定 Git ref (HEAD 或 origin/main) 下的語意化版本號 (vX.X.XX)
+    優先級：
+    1. Git Tag (若有打 v1.0.2 等標籤)
+    2. 專案原始碼定義 (core/launcher_v2.py, main.py, version.py, __version__.py, src/main.py, version.txt)
+    3. Commit Message 主旨中提取的版本 (如 v1.0.2 / (v1.0.2))
+    4. 若皆無，則回退至簡潔的補丁代碼 (如 v1.0.0-patch)
+    """
+    flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+    # 1. 檢查 Git Tag
+    try:
+        tag = subprocess.check_output(
+            ["git", "describe", "--tags", "--exact-match", ref],
+            cwd=wdir, creationflags=flags, text=True, timeout=3, stderr=subprocess.DEVNULL
+        ).strip()
+        if tag and re.match(r"^v?\d+\.\d+", tag):
+            return tag if tag.startswith("v") else f"v{tag}"
+    except Exception:
+        pass
+
+    try:
+        tag = subprocess.check_output(
+            ["git", "describe", "--tags", "--abbrev=0", ref],
+            cwd=wdir, creationflags=flags, text=True, timeout=3, stderr=subprocess.DEVNULL
+        ).strip()
+        if tag and re.match(r"^v?\d+\.\d+", tag):
+            return tag if tag.startswith("v") else f"v{tag}"
+    except Exception:
+        pass
+
+    # 2. 檢查原始碼檔案中的版本宣告
+    candidates = [
+        "core/launcher_v2.py",
+        "main.py",
+        "version.py",
+        "__version__.py",
+        "src/main.py",
+        "version.txt"
+    ]
+    for cfile in candidates:
+        try:
+            content = subprocess.check_output(
+                ["git", "show", f"{ref}:{cfile}"],
+                cwd=wdir, creationflags=flags, text=True, timeout=3,
+                encoding="utf-8", errors="ignore", stderr=subprocess.DEVNULL
+            )
+            m = re.search(r'(?:VERSION|__version__)\s*=\s*["\']([^"\']+)["\']', content)
+            if m:
+                v_str = m.group(1).strip()
+                return v_str if v_str.startswith("v") else f"v{v_str}"
+            if cfile == "version.txt":
+                first_line = content.strip().splitlines()[0]
+                if re.match(r"^v?\d+\.\d+", first_line):
+                    return first_line if first_line.startswith("v") else f"v{first_line}"
+        except Exception:
+            continue
+
+    # 3. 檢查 Commit 訊息中是否標記了版本
+    try:
+        subj = subprocess.check_output(
+            ["git", "log", "-1", "--format=%s", ref],
+            cwd=wdir, creationflags=flags, text=True, timeout=3, stderr=subprocess.DEVNULL
+        ).strip()
+        m = re.search(r'(?:^|[ (\[])v?(\d+\.\d+(?:\.\d+)?)[ )\]]?', subj, re.IGNORECASE)
+        if m:
+            return f"v{m.group(1)}"
+    except Exception:
+        pass
+
+    return "v1.0.0"
 
 
 def set_native_topmost(window_obj, is_topmost: bool):
@@ -1744,17 +1817,36 @@ class AIToolLauncherV2(MSFluentWindow):
                     ).strip()
 
                     if remote_hash and local_hash and remote_hash != local_hash:
-                        remote_log = subprocess.check_output(
-                            ["git", "log", "-1", "--format=%h - %s", remote_branch],
-                            cwd=wdir,
-                            creationflags=flags,
-                            text=True,
-                            timeout=4
-                        ).strip()
+                        # 智能解析語意化版本號 (vX.X.XX)
+                        local_semver = resolve_semantic_version(wdir, "HEAD")
+                        remote_semver = resolve_semantic_version(wdir, remote_branch)
+
+                        # 取得遠端 commit 主旨簡述
+                        remote_subj = ""
+                        try:
+                            remote_subj = subprocess.check_output(
+                                ["git", "log", "-1", "--format=%s", remote_branch],
+                                cwd=wdir, creationflags=flags, text=True, timeout=4, stderr=subprocess.DEVNULL
+                            ).strip()
+                        except Exception:
+                            pass
+
+                        # 組合直觀版本文字
+                        if remote_semver == local_semver:
+                            if remote_subj:
+                                remote_display = f"{remote_semver} (修復補丁: {remote_subj[:28]})"
+                            else:
+                                remote_display = f"{remote_semver} (最新修復補丁)"
+                        else:
+                            if remote_subj:
+                                remote_display = f"{remote_semver} ({remote_subj[:28]})"
+                            else:
+                                remote_display = remote_semver
+
                         self.toolUpdateAvailableSignal.emit(
                             name or repo_name,
-                            local_log or local_hash,
-                            remote_log or remote_hash
+                            local_semver,
+                            remote_display
                         )
                 except Exception:
                     continue
@@ -1764,6 +1856,7 @@ class AIToolLauncherV2(MSFluentWindow):
     def check_launcher_update_async(self, manual: bool = False):
         """
         在背景異步檢測 AIToolLauncher 主程式是否有新版本 (GitHub origin/main)
+        比對語意化版本號 (vX.X.XX)，拒絕不直觀的 commit hash
         """
         base_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if not os.path.exists(os.path.join(base_root, ".git")):
@@ -1782,34 +1875,45 @@ class AIToolLauncherV2(MSFluentWindow):
         def _task():
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                local = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=base_root, creationflags=flags, text=True).strip()
-                remote_out = subprocess.check_output(["git", "ls-remote", "origin", "-h", "refs/heads/main"], cwd=base_root, creationflags=flags, text=True).strip()
-                if remote_out:
-                    remote = remote_out.split()[0]
-                    if local and remote and local != remote:
-                        self.launcherUpdateAvailable.emit(remote[:7], f"發現主程式新版本 ({remote[:7]})")
-                        return
+                # 靜默抓取遠端最新 main 分支狀態
+                subprocess.run(
+                    ["git", "fetch", "origin", "main", "--quiet"],
+                    cwd=base_root, creationflags=flags, timeout=12,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                local_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=base_root, creationflags=flags, text=True).strip()
+                remote_hash = subprocess.check_output(["git", "rev-parse", "origin/main"], cwd=base_root, creationflags=flags, text=True).strip()
+
+                if local_hash and remote_hash and local_hash != remote_hash:
+                    local_ver = f"v{VERSION}"
+                    remote_ver = resolve_semantic_version(base_root, "origin/main")
+                    if remote_ver == local_ver:
+                        remote_ver = f"{local_ver}-patch"
+
+                    self.launcherUpdateAvailable.emit(remote_ver, local_ver)
+                    return
+
                 if manual:
-                    self.launcherUpdateStatus.emit("ALREADY_LATEST", "目前已是最新版本！無需更新。")
+                    self.launcherUpdateStatus.emit("ALREADY_LATEST", f"目前 AI Tool Launcher v{VERSION} 已經是最新發布版本！無需更新。")
             except Exception as e:
                 if manual:
                     self.launcherUpdateStatus.emit("ERROR", f"檢查更新異常: {e}")
 
         threading.Thread(target=_task, daemon=True).start()
 
-    def on_launcher_update_available_slot(self, short_hash: str, msg: str):
+    def on_launcher_update_available_slot(self, remote_ver: str, local_ver: str):
         bar = InfoBar(
             icon=FluentIcon.SYNC,
             title="✨ 發現 AIToolLauncher 主程式新版本！",
-            content=f"GitHub 遠端已有更新版本 ({short_hash})，點擊按鈕即可一鍵全自動升級並重啟。",
+            content=f"目前版本：{local_ver}  ➔  最新版本：{remote_ver}\n點擊右側按鈕即可一鍵全自動升級並重啟。",
             orient=Qt.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP_RIGHT,
             duration=-1,
             parent=self
         )
-        update_btn = PushButton("立即自動升級", bar)
-        update_btn.setFixedWidth(130)
+        update_btn = PushButton(f"升級至 {remote_ver}", bar)
+        update_btn.setFixedWidth(145)
         update_btn.clicked.connect(lambda: [bar.close(), self.do_launcher_update()])
         bar.addWidget(update_btn)
         bar.show()
