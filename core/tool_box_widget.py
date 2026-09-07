@@ -144,6 +144,7 @@ class ToolCardWidget(QWidget):
     STATE_RUNNING = "running"
     STATE_ERROR = "error"
     STATE_INSTALLING = "installing"
+    STATE_UPDATE_AVAILABLE = "update_available"
 
     def __init__(self, data: dict, is_installed: bool = True, is_favorite: bool = False, icon_size: int = 56, parent=None):
         super().__init__(parent)
@@ -153,6 +154,8 @@ class ToolCardWidget(QWidget):
         self.icon_size = icon_size
         self.current_state = self.STATE_IDLE
         self.install_progress = 0
+        self.has_update = False
+        self.update_info = {}
         self.parent_flow_widget = parent
 
         self.cloudIconLoaded.connect(self.on_cloud_icon_ready)
@@ -357,6 +360,32 @@ class ToolCardWidget(QWidget):
             self.status_badge.show()
             self.update_badge_pos()
 
+        elif state == self.STATE_UPDATE_AVAILABLE:
+            # 🔴 有新版本 (紅框 + 頂層浮動「有新版本」膠囊標籤)
+            self.card.setStyleSheet("""
+                CardWidget {
+                    background-color: rgba(239, 68, 68, 0.12);
+                    border: 2px solid #EF4444;
+                    border-radius: 8px;
+                }
+                CardWidget:hover {
+                    background-color: rgba(239, 68, 68, 0.22);
+                    border: 2px solid #F87171;
+                }
+            """)
+            self.status_badge.setText("🔴 有新版本")
+            self.status_badge.setStyleSheet("""
+                color: #F87171;
+                font-size: 10px;
+                font-weight: bold;
+                background: rgba(45, 15, 15, 0.95);
+                border: 1px solid #EF4444;
+                border-radius: 9px;
+                padding: 1px 6px;
+            """)
+            self.status_badge.show()
+            self.update_badge_pos()
+
         else:
             # ⚪ 未開啟 (鮮明原色、預設精緻半透明磨砂卡片)
             self.card.setStyleSheet("""
@@ -388,6 +417,22 @@ class ToolCardWidget(QWidget):
                 self.status_badge.hide()
 
         self.update_icon()
+
+    def set_update_available(self, available: bool, local_ver: str = "", remote_ver: str = ""):
+        """
+        設定此卡片是否有新版本更新可用
+        """
+        self.has_update = available
+        self.update_info = {
+            "local_ver": local_ver,
+            "remote_ver": remote_ver
+        }
+        if available:
+            if self.current_state not in (self.STATE_RUNNING, self.STATE_INSTALLING):
+                self.apply_state(self.STATE_UPDATE_AVAILABLE)
+        else:
+            if self.current_state == self.STATE_UPDATE_AVAILABLE:
+                self.apply_state(self.STATE_IDLE)
 
     def set_install_progress(self, progress: int, status_text: str = ""):
         """
@@ -493,22 +538,18 @@ class ToolCardWidget(QWidget):
             # === 已安裝小工具選單 ===
             act_launch = Action(FluentIcon.PLAY, "啟動工具 (Launch)", triggered=lambda: self.toolClicked.emit(self.data, True))
             act_open_dir = Action(FluentIcon.FOLDER, "開啟所在資料夾 (Open Folder)", triggered=self.open_tool_folder)
-            act_copy_path = Action(FluentIcon.COPY, "複製執行檔路徑 (Copy Path)", triggered=self.copy_executable_path)
 
             menu.addAction(act_launch)
             menu.addAction(act_fav)
             menu.addSeparator()
+            menu.addAction(act_open_dir)
+            menu.addSeparator()
 
             if is_cloud:
-                act_reinstall = Action(FluentIcon.SYNC, "重新拉取與更新 (Git Pull)", triggered=lambda: self.reinstallRequested.emit(self.data))
                 act_uninstall = Action(FluentIcon.DELETE, "解除安裝雲端版本 (Uninstall)", triggered=lambda: self.uninstallRequested.emit(self.data))
-                menu.addAction(act_reinstall)
             else:
                 act_uninstall = Action(FluentIcon.CLOSE, "從收納盒移除 (不刪除檔案)", triggered=lambda: self.uninstallRequested.emit(self.data))
 
-            menu.addAction(act_open_dir)
-            menu.addAction(act_copy_path)
-            menu.addSeparator()
             menu.addAction(act_uninstall)
         else:
             # === 未安裝雲端小工具選單 ===

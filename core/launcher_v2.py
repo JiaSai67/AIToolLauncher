@@ -426,6 +426,12 @@ class BoxLobbyInterface(QWidget):
             # 若該工具目前正運行中，初始化即同步顯示為綠色運行中
             if name in self.parent_window.running_processes or (repo_name and repo_name in self.parent_window.running_processes):
                 card.apply_state(ToolCardWidget.STATE_RUNNING)
+            elif name in self.parent_window.tools_with_updates:
+                u_info = self.parent_window.tools_with_updates[name]
+                card.set_update_available(True, u_info.get("local_ver", ""), u_info.get("remote_ver", ""))
+            elif repo_name and repo_name in self.parent_window.tools_with_updates:
+                u_info = self.parent_window.tools_with_updates[repo_name]
+                card.set_update_available(True, u_info.get("local_ver", ""), u_info.get("remote_ver", ""))
 
         # 動態分發點擊事件：依據當前卡片的 is_installed 狀態精準觸發啟動或安裝 (確保解除安裝後再點擊可直接安裝)
         def _on_card_clicked(d, inst, c=card):
@@ -635,6 +641,7 @@ class AIToolLauncherV2(MSFluentWindow):
     toolLaunchFailedSignal = Signal(str)                     # (name)
     launcherUpdateAvailable = Signal(str, str)               # (short_hash, msg)
     launcherUpdateStatus = Signal(str, str)                  # (status_type, msg)
+    toolUpdateAvailableSignal = Signal(str, str, str)        # (name, local_ver, remote_ver)
 
     def __init__(self):
         super().__init__()
@@ -649,6 +656,8 @@ class AIToolLauncherV2(MSFluentWindow):
         self.running_processes = {}
         # 安裝中卡片管理表: {repo_name: card}
         self.installing_cards = {}
+        # 工具新版本更新資訊表: {tool_name: {"local_ver": str, "remote_ver": str}}
+        self.tools_with_updates = {}
         # 背景桌布、動態 GIF 與高斯磨砂壓克力管理 (比照 desk_tidy)
         self.bg_movie = None
         self.raw_background_pixmap = None
@@ -666,6 +675,7 @@ class AIToolLauncherV2(MSFluentWindow):
         self.toolLaunchFailedSignal.connect(self.on_tool_launched_failed)
         self.launcherUpdateAvailable.connect(self.on_launcher_update_available_slot)
         self.launcherUpdateStatus.connect(self.on_launcher_update_status_slot)
+        self.toolUpdateAvailableSignal.connect(self.on_tool_update_available_slot)
 
         # 即時進程狀態監控定時器 (每秒檢測程式是否關閉，自動重置卡片為未開啟)
         self.proc_monitor_timer = QTimer(self)
@@ -678,6 +688,9 @@ class AIToolLauncherV2(MSFluentWindow):
         self.init_navigation()
 
         threading.Thread(target=lambda: send_identity_webhook("🚀 啟動 AIToolLauncher 2.0 (收納盒模式)", "使用者已成功開啟 AIToolLauncher 2.0 大廳。"), daemon=True).start()
+
+        # 開機 2.5 秒後在背景靜默檢查所有小工具是否有新版本更新
+        QTimer.singleShot(2500, self.check_all_tools_updates_async)
 
         # 開機 3.5 秒後在背景靜默檢查 AIToolLauncher 主程式自身是否有更新
         QTimer.singleShot(3500, lambda: self.check_launcher_update_async(manual=False))
@@ -1314,6 +1327,31 @@ class AIToolLauncherV2(MSFluentWindow):
             else:
                 self.running_processes.pop(name, None)
 
+        # 2. 檢測是否有新版本更新：點選該專案時通知目前版本與即將更新版本並詢問是否更新
+        repo_name = tool_data.get("repo_name", "")
+        update_info = self.tools_with_updates.get(name) or (self.tools_with_updates.get(repo_name) if repo_name else None)
+        if update_info:
+            local_ver = update_info.get("local_ver", "舊版本")
+            remote_ver = update_info.get("remote_ver", "最新版本")
+
+            m = MessageBox(
+                "📦 發現新版本通知",
+                f"【{name}】已檢測到最新版本！\n\n"
+                f"📌 目前本機版本：\n{local_ver}\n\n"
+                f"🚀 遠端最新版本：\n{remote_ver}\n\n"
+                "請問您是否要立即更新此小工具？\n"
+                "• 點選【立即更新】：不啟動專案，直接下載並同步最新版本。\n"
+                "• 點選【直接啟動】：跳過本次更新，直接打開目前版本。",
+                self
+            )
+            m.yesButton.setText("立即更新")
+            m.cancelButton.setText("直接啟動")
+            if m.exec():
+                # 使用者同意更新：不開專案，直接走更新流程
+                self.reinstall_tool(tool_data)
+                return
+            # 使用者不同意更新：繼續向下執行打開專案，不做更新
+
         # 自適應修復路徑
         if not os.path.exists(exe):
             if "2.0\\CloudTools" in exe and os.path.exists(exe.replace("2.0\\CloudTools", "CloudTools")):
@@ -1385,7 +1423,7 @@ class AIToolLauncherV2(MSFluentWindow):
 
     def set_all_cards_state(self, tool_name: str, state: str, progress: int = 0, status_text: str = ""):
         """
-        同步更新所有分類區塊 (我的收藏 / 全部專案) 中該專案小卡的運行/安裝狀態
+        同步更新所有分類區塊 (我的收藏 / 全部專案) 中該專案小卡的運行/安裝/更新狀態
         """
         if not hasattr(self, "box_lobby") or not self.box_lobby:
             return
@@ -1400,8 +1438,21 @@ class AIToolLauncherV2(MSFluentWindow):
                     if tool_name in (w_name, w_repo) or (w_name and w_name == tool_name) or (w_repo and w_repo == tool_name):
                         if state == ToolCardWidget.STATE_INSTALLING:
                             w.set_install_progress(progress, status_text)
+                        elif state == ToolCardWidget.STATE_UPDATE_AVAILABLE:
+                            u_info = getattr(self, "tools_with_updates", {}).get(tool_name) or getattr(self, "tools_with_updates", {}).get(w_repo, {})
+                            w.set_update_available(True, u_info.get("local_ver", ""), u_info.get("remote_ver", ""))
                         else:
                             w.apply_state(state)
+
+    def on_tool_update_available_slot(self, tool_name: str, local_ver: str, remote_ver: str):
+        """
+        當背景檢測到小工具有 Git 遠端新版本時，記錄並將該工具卡片套用紅框與有新版本標籤
+        """
+        self.tools_with_updates[tool_name] = {
+            "local_ver": local_ver,
+            "remote_ver": remote_ver
+        }
+        self.set_all_cards_state(tool_name, ToolCardWidget.STATE_UPDATE_AVAILABLE)
 
     def on_tool_launched_success(self, name: str, pid: int, proc: object):
         self.running_processes[name] = {
@@ -1415,7 +1466,7 @@ class AIToolLauncherV2(MSFluentWindow):
 
     def poll_running_processes(self):
         """
-        每秒定期檢測運行中的小工具，若程式關閉則同步將所有分類的卡片復原為未開啟 (IDLE)
+        每秒定期檢測運行中的小工具，若程式關閉則同步將所有分類的卡片復原為未開啟 (IDLE) 或有新版本 (UPDATE_AVAILABLE)
         """
         stopped_tools = []
         for name, info in list(self.running_processes.items()):
@@ -1424,8 +1475,11 @@ class AIToolLauncherV2(MSFluentWindow):
                 ret = proc.poll()
                 if ret is not None:
                     stopped_tools.append(name)
-                    # 程式正常結束或手動關閉，均將所有分類的卡片同步復原為未開啟 (IDLE)
-                    self.set_all_cards_state(name, ToolCardWidget.STATE_IDLE)
+                    # 程式結束：若仍有新版本未更新，復原為有新版本紅框；否則復原為未開啟 (IDLE)
+                    if name in self.tools_with_updates:
+                        self.set_all_cards_state(name, ToolCardWidget.STATE_UPDATE_AVAILABLE)
+                    else:
+                        self.set_all_cards_state(name, ToolCardWidget.STATE_IDLE)
         for name in stopped_tools:
             self.running_processes.pop(name, None)
 
@@ -1586,6 +1640,13 @@ class AIToolLauncherV2(MSFluentWindow):
 
     def on_reinstall_finished_slot(self, success: bool, msg: str, updated_tool: dict):
         if success and updated_tool:
+            u_name = updated_tool.get("name", "")
+            u_repo = updated_tool.get("repo_name", "")
+            if u_name in self.tools_with_updates:
+                self.tools_with_updates.pop(u_name, None)
+            if u_repo in self.tools_with_updates:
+                self.tools_with_updates.pop(u_repo, None)
+
             for i, t in enumerate(self.registry.get("tools", [])):
                 if t.get("name") == updated_tool.get("name"):
                     self.registry["tools"][i] = updated_tool
@@ -1612,6 +1673,93 @@ class AIToolLauncherV2(MSFluentWindow):
                 duration=4500,
                 parent=self
             )
+
+    def check_all_tools_updates_async(self):
+        """
+        在背景異步檢測所有已安裝的小工具是否有 Git 遠端新版本
+        """
+        tools = list(self.registry.get("tools", []))
+        if not tools:
+            return
+
+        def _task():
+            flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+            for t in tools:
+                wdir = t.get("working_dir", "")
+                name = t.get("name", "")
+                repo_name = t.get("repo_name", "")
+                if not wdir or not os.path.exists(wdir):
+                    continue
+                git_dir = os.path.join(wdir, ".git")
+                if not os.path.exists(git_dir):
+                    continue
+
+                try:
+                    # 1. 取得本地當前短 commit hash 與最新 commit 主旨
+                    local_hash = subprocess.check_output(
+                        ["git", "rev-parse", "--short", "HEAD"],
+                        cwd=wdir,
+                        creationflags=flags,
+                        text=True,
+                        timeout=5
+                    ).strip()
+
+                    local_log = subprocess.check_output(
+                        ["git", "log", "-1", "--format=%h - %s", "HEAD"],
+                        cwd=wdir,
+                        creationflags=flags,
+                        text=True,
+                        timeout=5
+                    ).strip()
+
+                    # 2. 靜默抓取遠端 origin 分支資訊 (不改動工作區)
+                    subprocess.run(
+                        ["git", "fetch", "origin", "--quiet"],
+                        cwd=wdir,
+                        creationflags=flags,
+                        timeout=10,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+
+                    # 3. 確定遠端追蹤分支 (優先 main，次之 master)
+                    remote_branch = "origin/main"
+                    chk = subprocess.run(
+                        ["git", "rev-parse", "--verify", "origin/main"],
+                        cwd=wdir,
+                        creationflags=flags,
+                        timeout=4,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL
+                    )
+                    if chk.returncode != 0:
+                        remote_branch = "origin/master"
+
+                    remote_hash = subprocess.check_output(
+                        ["git", "rev-parse", "--short", remote_branch],
+                        cwd=wdir,
+                        creationflags=flags,
+                        text=True,
+                        timeout=4
+                    ).strip()
+
+                    if remote_hash and local_hash and remote_hash != local_hash:
+                        remote_log = subprocess.check_output(
+                            ["git", "log", "-1", "--format=%h - %s", remote_branch],
+                            cwd=wdir,
+                            creationflags=flags,
+                            text=True,
+                            timeout=4
+                        ).strip()
+                        self.toolUpdateAvailableSignal.emit(
+                            name or repo_name,
+                            local_log or local_hash,
+                            remote_log or remote_hash
+                        )
+                except Exception:
+                    continue
+
+        threading.Thread(target=_task, daemon=True).start()
 
     def check_launcher_update_async(self, manual: bool = False):
         """
