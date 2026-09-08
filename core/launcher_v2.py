@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.17"
+VERSION = "2.0.18"
 
 
 def parse_version_tuple(v_str: str) -> tuple:
@@ -779,6 +779,12 @@ class AIToolLauncherV2(MSFluentWindow):
         # 開機 3.5 秒後在背景靜默檢查 AIToolLauncher 主程式自身是否有更新
         QTimer.singleShot(3500, lambda: self.check_launcher_update_async(manual=False))
 
+        # 每 5 分鐘自動在背景循環檢查所有小工具是否有新版本更新
+        self.tool_update_timer = QTimer(self)
+        self.tool_update_timer.setInterval(5 * 60 * 1000)  # 5 分鐘 (300,000 毫秒)
+        self.tool_update_timer.timeout.connect(self.check_all_tools_updates_async)
+        self.tool_update_timer.start()
+
     def on_movie_frame_changed(self):
         """
         GIF 動畫幀變更即時渲染槽 (具備 0ms 記憶體幀快取技術，杜絕即時高斯模糊卡頓)
@@ -860,7 +866,10 @@ class AIToolLauncherV2(MSFluentWindow):
         self.settings_panel = SettingsPanel(self.settings_file, version=VERSION, parent=self)
         self.settings = self.settings_panel.settings
         self.settings_panel.settingsChanged.connect(self.apply_live_settings)
-        self.settings_panel.checkUpdateRequested.connect(lambda: self.check_launcher_update_async(manual=True))
+        self.settings_panel.checkUpdateRequested.connect(lambda: [
+            self.check_launcher_update_async(manual=True),
+            self.check_all_tools_updates_async()
+        ])
 
     def init_window(self):
         self.setWindowTitle(f"AI Tool Launcher 2.0 [收納盒模式] v{VERSION}")
@@ -1413,7 +1422,8 @@ class AIToolLauncherV2(MSFluentWindow):
 
         # 2. 檢測是否有新版本更新：點選該專案時通知目前版本與即將更新版本並詢問是否更新
         repo_name = tool_data.get("repo_name", "")
-        update_info = self.tools_with_updates.get(name) or (self.tools_with_updates.get(repo_name) if repo_name else None)
+        folder_name = os.path.basename(wdir) if wdir else ""
+        update_info = self.get_tool_update_info(name, repo_name, folder_name)
         if update_info:
             local_ver = update_info.get("local_ver", "舊版本")
             remote_ver = update_info.get("remote_ver", "最新版本")
@@ -1505,6 +1515,21 @@ class AIToolLauncherV2(MSFluentWindow):
 
         threading.Thread(target=_run, daemon=True).start()
 
+    def get_tool_update_info(self, *identifiers) -> dict:
+        """
+        支援多識別符 (名稱、倉庫名、資料夾名) 模糊比對查詢小工具更新資訊
+        """
+        if not hasattr(self, "tools_with_updates") or not self.tools_with_updates:
+            return {}
+        for ident in identifiers:
+            if not ident:
+                continue
+            s_ident = str(ident).strip().lower()
+            for key, val in self.tools_with_updates.items():
+                if s_ident == str(key).strip().lower():
+                    return val or {}
+        return {}
+
     def set_all_cards_state(self, tool_name: str, state: str, progress: int = 0, status_text: str = ""):
         """
         同步更新所有分類區塊 (我的收藏 / 全部專案) 中該專案小卡的運行/安裝/更新狀態
@@ -1512,18 +1537,32 @@ class AIToolLauncherV2(MSFluentWindow):
         if not hasattr(self, "box_lobby") or not self.box_lobby:
             return
 
+        def _matches(t_id: str, w_obj) -> bool:
+            if not t_id or not w_obj or not hasattr(w_obj, "data"):
+                return False
+            tid = str(t_id).strip().lower()
+            d = w_obj.data or {}
+            c_name = str(d.get("name", "")).strip().lower()
+            c_repo = str(d.get("repo_name", "")).strip().lower()
+            c_folder = os.path.basename(str(d.get("working_dir", "")).strip()).lower()
+            return tid in (c_name, c_repo, c_folder)
+
         for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.all_flow_layout]:
             for i in range(layout.count()):
                 item = layout.itemAt(i)
                 w = item.widget() if item else None
                 if isinstance(w, ToolCardWidget):
-                    w_name = w.data.get("name", "")
-                    w_repo = w.data.get("repo_name", "")
-                    if tool_name in (w_name, w_repo) or (w_name and w_name == tool_name) or (w_repo and w_repo == tool_name):
+                    if _matches(tool_name, w):
                         if state == ToolCardWidget.STATE_INSTALLING:
                             w.set_install_progress(progress, status_text)
                         elif state == ToolCardWidget.STATE_UPDATE_AVAILABLE:
-                            u_info = getattr(self, "tools_with_updates", {}).get(tool_name) or getattr(self, "tools_with_updates", {}).get(w_repo, {})
+                            d = w.data or {}
+                            u_info = self.get_tool_update_info(
+                                tool_name,
+                                d.get("name"),
+                                d.get("repo_name"),
+                                os.path.basename(d.get("working_dir", "") or "")
+                            )
                             w.set_update_available(True, u_info.get("local_ver", ""), u_info.get("remote_ver", ""))
                         else:
                             w.apply_state(state)
@@ -1532,10 +1571,12 @@ class AIToolLauncherV2(MSFluentWindow):
         """
         當背景檢測到小工具有 Git 遠端新版本時，記錄並將該工具卡片套用紅框與有新版本標籤
         """
-        self.tools_with_updates[tool_name] = {
+        info = {
             "local_ver": local_ver,
             "remote_ver": remote_ver
         }
+        self.tools_with_updates[tool_name] = info
+        self.tools_with_updates[tool_name.lower()] = info
         self.set_all_cards_state(tool_name, ToolCardWidget.STATE_UPDATE_AVAILABLE)
 
     def on_tool_launched_success(self, name: str, pid: int, proc: object):
@@ -1560,7 +1601,8 @@ class AIToolLauncherV2(MSFluentWindow):
                 if ret is not None:
                     stopped_tools.append(name)
                     # 程式結束：若仍有新版本未更新，復原為有新版本紅框；否則復原為未開啟 (IDLE)
-                    if name in self.tools_with_updates:
+                    u_info = self.get_tool_update_info(name)
+                    if u_info:
                         self.set_all_cards_state(name, ToolCardWidget.STATE_UPDATE_AVAILABLE)
                     else:
                         self.set_all_cards_state(name, ToolCardWidget.STATE_IDLE)
@@ -1761,8 +1803,41 @@ class AIToolLauncherV2(MSFluentWindow):
     def check_all_tools_updates_async(self):
         """
         在背景異步檢測所有已安裝的小工具是否有 Git 遠端新版本
+        全面搜集 registry 登記、已載入工具以及 CloudTools 目錄實體倉庫
         """
-        tools = list(self.registry.get("tools", []))
+        tools_map = {}
+        # 1. 搜集來自 registry 的小工具
+        for t in self.registry.get("tools", []):
+            wdir = t.get("working_dir", "")
+            if wdir:
+                tools_map[os.path.normpath(wdir).lower()] = dict(t)
+
+        # 2. 搜集來自 load_tools 的小工具 (包含本機註冊與自動偵測)
+        try:
+            for t in self.load_tools():
+                wdir = t.get("working_dir", "")
+                if wdir:
+                    tools_map[os.path.normpath(wdir).lower()] = dict(t)
+        except Exception:
+            pass
+
+        # 3. 搜集 CloudTools 目錄中所有含有 .git 的實體資料夾
+        if os.path.exists(self.cloud_tools_dir):
+            try:
+                for folder in os.listdir(self.cloud_tools_dir):
+                    f_path = os.path.join(self.cloud_tools_dir, folder)
+                    if os.path.isdir(f_path) and os.path.exists(os.path.join(f_path, ".git")):
+                        norm_k = os.path.normpath(f_path).lower()
+                        if norm_k not in tools_map:
+                            tools_map[norm_k] = {
+                                "name": folder,
+                                "repo_name": folder,
+                                "working_dir": f_path
+                            }
+            except Exception:
+                pass
+
+        tools = list(tools_map.values())
         if not tools:
             return
 
@@ -1772,6 +1847,8 @@ class AIToolLauncherV2(MSFluentWindow):
                 wdir = t.get("working_dir", "")
                 name = t.get("name", "")
                 repo_name = t.get("repo_name", "")
+                folder_name = os.path.basename(wdir) if wdir else ""
+
                 if not wdir or not os.path.exists(wdir):
                     continue
                 git_dir = os.path.join(wdir, ".git")
@@ -1779,21 +1856,13 @@ class AIToolLauncherV2(MSFluentWindow):
                     continue
 
                 try:
-                    # 1. 取得本地當前短 commit hash 與最新 commit 主旨
+                    # 1. 取得本地當前短 commit hash
                     local_hash = subprocess.check_output(
                         ["git", "rev-parse", "--short", "HEAD"],
                         cwd=wdir,
                         creationflags=flags,
                         text=True,
-                        timeout=5
-                    ).strip()
-
-                    local_log = subprocess.check_output(
-                        ["git", "log", "-1", "--format=%h - %s", "HEAD"],
-                        cwd=wdir,
-                        creationflags=flags,
-                        text=True,
-                        timeout=5
+                        timeout=6
                     ).strip()
 
                     # 2. 靜默抓取遠端 origin 分支資訊 (不改動工作區)
@@ -1801,7 +1870,7 @@ class AIToolLauncherV2(MSFluentWindow):
                         ["git", "fetch", "origin", "--quiet"],
                         cwd=wdir,
                         creationflags=flags,
-                        timeout=10,
+                        timeout=15,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL
                     )
@@ -1845,17 +1914,29 @@ class AIToolLauncherV2(MSFluentWindow):
                         # 組合直觀版本文字
                         if remote_semver == local_semver:
                             if remote_subj:
-                                remote_display = f"{remote_semver} (修復補丁: {remote_subj[:28]})"
+                                remote_display = f"{remote_semver} (修復更新: {remote_subj[:24]})"
                             else:
-                                remote_display = f"{remote_semver} (最新修復補丁)"
+                                remote_display = f"{remote_semver} (最新修復更新)"
                         else:
                             if remote_subj:
-                                remote_display = f"{remote_semver} ({remote_subj[:28]})"
+                                remote_display = f"{remote_semver} ({remote_subj[:24]})"
                             else:
                                 remote_display = remote_semver
 
+                        # 將各可能識別名皆預先寫入更新字典
+                        update_entry = {
+                            "local_ver": local_semver,
+                            "remote_ver": remote_display
+                        }
+                        for k in [name, repo_name, folder_name]:
+                            if k:
+                                self.tools_with_updates[k] = update_entry
+                                self.tools_with_updates[k.lower()] = update_entry
+
+                        # 發射訊號通知主介面
+                        ident = name or repo_name or folder_name
                         self.toolUpdateAvailableSignal.emit(
-                            name or repo_name,
+                            ident,
                             local_semver,
                             remote_display
                         )
