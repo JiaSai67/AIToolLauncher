@@ -8,6 +8,30 @@ except ModuleNotFoundError:
 
 GITHUB_REPOS_API = "https://api.github.com/users/JiaSai67/repos?per_page=100&sort=updated"
 
+def check_requirements_satisfied(req_path: str) -> bool:
+    """
+    極速檢查 requirements.txt 內的依賴套件是否已全數安裝於當前環境 (< 0.05s)
+    若皆已滿足，則 0ms 直接略過慢速 pip 聯網檢查，杜絕卡頓
+    """
+    if not os.path.exists(req_path):
+        return True
+    try:
+        import importlib.metadata
+        installed_dists = {dist.metadata["Name"].lower(): dist.version for dist in importlib.metadata.distributions()}
+        with open(req_path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # 提取套件主名稱 (如 psutil>=5.9.0 -> psutil)
+                pkg_name = re.split(r'[<>=!~]', line)[0].strip().lower()
+                if pkg_name not in installed_dists:
+                    return False
+        return True
+    except Exception:
+        return False
+
+
 def get_silent_flags_and_startupinfo():
     """
     確保在 Windows 下執行所有 Git 與 Pip 指令時 100% 完全無黑窗閃現
@@ -319,19 +343,21 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
                 on_finished(False, "下載完成，但找不到標準啟動檔 (如 linkme.bat 或 main.py)", None)
                 return
 
-            _report(85, "正在檢查依賴環境...")
-
             # 3. 安裝 requirements.txt (100% 靜默)
             req_path = os.path.join(target_dir, "requirements.txt")
             if os.path.exists(req_path):
-                _report(90, "正在安裝依賴套件...")
-                pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
-                subprocess.run(
-                    [pip_cmd, "-m", "pip", "install", "-r", req_path],
-                    cwd=target_dir, creationflags=flags, startupinfo=startupinfo,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=180
-                )
+                _report(85, "正在檢查依賴環境...")
+                if check_requirements_satisfied(req_path):
+                    _report(95, "依賴套件已全數就緒！")
+                else:
+                    _report(90, "正在下載並安裝依賴套件...")
+                    pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
+                    subprocess.run(
+                        [pip_cmd, "-m", "pip", "install", "--default-timeout=15", "-r", req_path],
+                        cwd=target_dir, creationflags=flags, startupinfo=startupinfo,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=45
+                    )
 
             _report(100, "安裝完成！")
 
@@ -404,14 +430,18 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished, on_progr
             # 4. 檢查 requirements.txt
             req_path = os.path.join(wdir, "requirements.txt")
             if os.path.exists(req_path):
-                _report(85, f"正在檢查並安裝依賴套件...")
-                pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
-                subprocess.run(
-                    [pip_cmd, "-m", "pip", "install", "-r", req_path],
-                    cwd=wdir, creationflags=flags, startupinfo=startupinfo,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=180
-                )
+                _report(85, f"正在檢查依賴套件...")
+                if check_requirements_satisfied(req_path):
+                    _report(95, f"依賴套件已全數就緒！")
+                else:
+                    _report(88, f"正在下載並安裝依賴套件...")
+                    pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
+                    subprocess.run(
+                        [pip_cmd, "-m", "pip", "install", "--default-timeout=15", "-r", req_path],
+                        cwd=wdir, creationflags=flags, startupinfo=startupinfo,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=45
+                    )
 
             _report(100, f"更新完成！")
             send_identity_webhook(f"🔄 重新拉取小工具: {name}", f"工作目錄: {wdir}")

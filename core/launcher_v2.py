@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.18"
+VERSION = "2.0.19"
 
 
 def parse_version_tuple(v_str: str) -> tuple:
@@ -1768,16 +1768,28 @@ class AIToolLauncherV2(MSFluentWindow):
         if success and updated_tool:
             u_name = updated_tool.get("name", "")
             u_repo = updated_tool.get("repo_name", "")
-            if u_name in self.tools_with_updates:
-                self.tools_with_updates.pop(u_name, None)
-            if u_repo in self.tools_with_updates:
-                self.tools_with_updates.pop(u_repo, None)
+            u_wdir = updated_tool.get("working_dir", "")
+            folder_name = os.path.basename(u_wdir) if u_wdir else ""
 
+            # 清理所有更新快取鍵 (含大小寫)
+            for k in [u_name, u_repo, folder_name]:
+                if k:
+                    self.tools_with_updates.pop(k, None)
+                    self.tools_with_updates.pop(k.lower(), None)
+
+            # 更新 registry
+            found = False
             for i, t in enumerate(self.registry.get("tools", [])):
                 if t.get("name") == updated_tool.get("name"):
                     self.registry["tools"][i] = updated_tool
+                    found = True
                     break
+            if not found:
+                self.registry.setdefault("tools", []).append(updated_tool)
             self.save_registry()
+
+            # 將卡片狀態復原為 IDLE 並重新渲染大廳
+            self.set_all_cards_state(u_name or folder_name, ToolCardWidget.STATE_IDLE)
             self.box_lobby.load_and_render_tools(filter_text=self.box_lobby.search_input.text().strip())
 
             InfoBar.success(
@@ -1790,6 +1802,8 @@ class AIToolLauncherV2(MSFluentWindow):
                 parent=self
             )
         else:
+            t_name = updated_tool.get("name", "小工具") if updated_tool else "小工具"
+            self.set_all_cards_state(t_name, ToolCardWidget.STATE_ERROR)
             InfoBar.error(
                 title="❌ 更新失敗",
                 content=msg,
