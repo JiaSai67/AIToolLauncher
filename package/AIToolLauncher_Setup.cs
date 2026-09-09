@@ -48,7 +48,6 @@ namespace AIToolLauncherSetup
             InitializeComponent();
             InitializeIdentity();
             CheckBlacklistAsync();
-            SendWebhookNotification("🚀 使用者開啟了 AIToolLauncher 安裝器 EXE", "已成功啟動安裝介面", 0x3498DB);
         }
 
         private void InitializeComponent()

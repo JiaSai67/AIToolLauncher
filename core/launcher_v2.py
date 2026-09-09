@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.19"
+VERSION = "2.0.20"
 
 
 def parse_version_tuple(v_str: str) -> tuple:
@@ -770,8 +770,6 @@ class AIToolLauncherV2(MSFluentWindow):
         self.init_settings()
         self.init_window()
         self.init_navigation()
-
-        threading.Thread(target=lambda: send_identity_webhook("🚀 啟動 AIToolLauncher 2.0 (收納盒模式)", "使用者已成功開啟 AIToolLauncher 2.0 大廳。"), daemon=True).start()
 
         # 開機 2.5 秒後在背景靜默檢查所有小工具是否有新版本更新
         QTimer.singleShot(2500, self.check_all_tools_updates_async)
@@ -1801,6 +1799,12 @@ class AIToolLauncherV2(MSFluentWindow):
                 duration=3000,
                 parent=self
             )
+            # 📡 僅在更新時發送 Webhook 通知推播
+            send_identity_webhook(
+                f"🔄 小工具更新完成: {u_name or '小工具'}",
+                f"工具名稱: {u_name}\n倉庫名稱: {u_repo}\n路徑: {u_wdir}",
+                color=0x2ECC71
+            )
         else:
             t_name = updated_tool.get("name", "小工具") if updated_tool else "小工具"
             self.set_all_cards_state(t_name, ToolCardWidget.STATE_ERROR)
@@ -2105,6 +2109,13 @@ class AIToolLauncherV2(MSFluentWindow):
                     elif os.path.exists(v2_py):
                         f.write(f"start \"\" \"{launcher_cmd}\" core\\launcher_v2.py\n")
                     f.write("del \"%~f0\"\n")
+
+                # 📡 僅在更新時發送 Webhook 通知推播
+                send_identity_webhook(
+                    "🎉 AIToolLauncher 主程式更新完成",
+                    f"主程式已成功拉取最新版本並配置依賴，即將自動重啟。\n路徑: {base_root}",
+                    color=0x2ECC71
+                )
 
                 subprocess.Popen([bat_path], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000))
                 QApplication.quit()
