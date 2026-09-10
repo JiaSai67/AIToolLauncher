@@ -138,6 +138,7 @@ class ToolCardWidget(QWidget):
     reinstallRequested = Signal(dict)          # (tool_data)
     uninstallRequested = Signal(dict)          # (tool_data)
     toggleFavoriteRequested = Signal(dict)     # (tool_data)
+    resetStateRequested = Signal(dict)         # (tool_data) 手動重置卡片運行狀態信號
     cloudIconLoaded = Signal(str)              # (cached_icon_path)
 
     STATE_IDLE = "idle"
@@ -145,6 +146,19 @@ class ToolCardWidget(QWidget):
     STATE_ERROR = "error"
     STATE_INSTALLING = "installing"
     STATE_UPDATE_AVAILABLE = "update_available"
+
+    def is_local_project(self) -> bool:
+        """
+        判定當前卡片是否為純本地專案 (不屬於 CloudTools 雲端專案)
+        """
+        if not self.data:
+            return False
+        if self.data.get("is_local") is True or self.data.get("source") == "local":
+            return True
+        wdir = (self.data.get("working_dir") or "").lower()
+        if wdir and "cloudtools" not in wdir:
+            return True
+        return False
 
     def __init__(self, data: dict, is_installed: bool = True, is_favorite: bool = False, icon_size: int = 56, parent=None):
         super().__init__(parent)
@@ -420,8 +434,15 @@ class ToolCardWidget(QWidget):
 
     def set_update_available(self, available: bool, local_ver: str = "", remote_ver: str = ""):
         """
-        設定此卡片是否有新版本更新可用
+        設定此卡片是否有新版本更新可用 (本地專案 100% 豁免，絕不套用更新狀態)
         """
+        if self.is_local_project():
+            self.has_update = False
+            self.update_info = {}
+            if self.current_state == self.STATE_UPDATE_AVAILABLE:
+                self.apply_state(self.STATE_IDLE)
+            return
+
         self.has_update = available
         self.update_info = {
             "local_ver": local_ver,
@@ -532,8 +553,7 @@ class ToolCardWidget(QWidget):
             act_fav = Action(FluentIcon.HEART, "⭐ 加入收藏 (Add to Favorite)", triggered=lambda: self.toggleFavoriteRequested.emit(self.data))
 
         if self.is_installed:
-            wdir = self.data.get("working_dir", "")
-            is_cloud = "cloudtools" in wdir.lower()
+            is_local = self.is_local_project()
 
             # === 已安裝小工具選單 ===
             act_launch = Action(FluentIcon.PLAY, "啟動工具 (Launch)", triggered=lambda: self.toolClicked.emit(self.data, True))
@@ -543,14 +563,22 @@ class ToolCardWidget(QWidget):
             menu.addAction(act_fav)
             menu.addSeparator()
             menu.addAction(act_open_dir)
+
+            # 若卡片處於運行中或異常狀態，提供一鍵強制重置狀態選項
+            if self.current_state in (self.STATE_RUNNING, self.STATE_ERROR):
+                act_reset = Action(FluentIcon.SYNC, "🔄 重置運行狀態 (Reset State)", triggered=lambda: self.resetStateRequested.emit(self.data))
+                menu.addAction(act_reset)
+
             menu.addSeparator()
 
-            if is_cloud:
+            if not is_local:
+                act_reinstall = Action(FluentIcon.UPDATE, "重新拉取 / 覆蓋更新 (Force Pull)", triggered=lambda: self.reinstallRequested.emit(self.data))
                 act_uninstall = Action(FluentIcon.DELETE, "解除安裝雲端版本 (Uninstall)", triggered=lambda: self.uninstallRequested.emit(self.data))
+                menu.addAction(act_reinstall)
+                menu.addAction(act_uninstall)
             else:
-                act_uninstall = Action(FluentIcon.CLOSE, "從收納盒移除 (不刪除檔案)", triggered=lambda: self.uninstallRequested.emit(self.data))
-
-            menu.addAction(act_uninstall)
+                act_uninstall = Action(FluentIcon.CLOSE, "從收納盒移除註冊 (不刪除本機檔案)", triggered=lambda: self.uninstallRequested.emit(self.data))
+                menu.addAction(act_uninstall)
         else:
             # === 未安裝雲端小工具選單 ===
             act_install = Action(FluentIcon.DOWNLOAD, "下載並安裝此工具 (Install)", triggered=lambda: self.installRequested.emit(self.data))
