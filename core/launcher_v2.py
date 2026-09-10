@@ -202,66 +202,9 @@ def set_native_topmost(window_obj, is_topmost: bool):
             hwnd_val = int(window_obj.winId()) if hasattr(window_obj, 'winId') else int(window_obj)
             hwnd = wintypes.HWND(hwnd_val)
             target = HWND_TOPMOST if is_topmost else HWND_NOTOPMOST
+            SetWindowPos(hwnd, target, 0, 0, 0, 0, flags)
     except Exception:
         pass
-
-
-def is_process_alive(pid: int, proc=None) -> bool:
-    """
-    精準雙重檢驗進程是否仍在 Windows 作業系統中存活
-    """
-    if proc is not None:
-        try:
-            if proc.poll() is not None:
-                return False
-        except Exception:
-            pass
-    if not pid or pid <= 0:
-        return False
-
-    # 1. Windows 原生 Win32 核心檢驗 (STILL_ACTIVE = 259)
-    try:
-        import ctypes
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        STILL_ACTIVE = 259
-        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
-        if not handle:
-            return False
-        exit_code = ctypes.c_ulong()
-        success = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
-        ctypes.windll.kernel32.CloseHandle(handle)
-        if not success or exit_code.value != STILL_ACTIVE:
-            return False
-        return True
-    except Exception:
-        pass
-
-    # 2. psutil 二次防禦檢驗
-    try:
-        import psutil
-        return psutil.pid_exists(pid)
-    except Exception:
-        return False
-
-
-def is_local_project_data(tool_data: dict, cloud_tools_dir: str = "") -> bool:
-    """
-    判定工具資料是否代表本機原始碼/本地開發專案 (完全獨立於雲端市集，絕不參與遠端 Git 檢查與更新)
-    """
-    if not tool_data:
-        return False
-    if tool_data.get("is_local") is True or tool_data.get("source") == "local":
-        return True
-    wdir = (tool_data.get("working_dir") or "").strip()
-    if wdir:
-        norm_w = os.path.normpath(wdir).lower()
-        if cloud_tools_dir:
-            norm_c = os.path.normpath(cloud_tools_dir).lower()
-            if not norm_w.startswith(norm_c):
-                return True
-        elif "cloudtools" not in norm_w:
-            return True
-    return False
 
 
 def get_real_python_exe(prefer_gui: bool = True) -> str:
@@ -319,6 +262,69 @@ def get_real_python_exe(prefer_gui: bool = True) -> str:
             return p
 
     return "pythonw" if prefer_gui else "python"
+
+
+def is_pid_alive(pid: int) -> bool:
+    """
+    精確檢測 Windows 系統中給定 PID 的進程是否真實處於活動狀態 (STILL_ACTIVE)
+    徹底避免 DETACHED 進程或殭屍 handle 導致卡死
+    """
+    if not pid or pid <= 0:
+        return False
+    try:
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if handle:
+            exit_code = ctypes.c_ulong()
+            success = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return bool(success and exit_code.value == STILL_ACTIVE)
+    except Exception:
+        pass
+    return False
+
+
+def is_local_tool_data(data: dict) -> bool:
+    """
+    精準判定專案是否為本地獨立專案 (非 CloudTools 下的雲端專案)
+    本地專案永遠不與雲端混為一談，完全排除於雲端更新之外
+    """
+    if not data or not isinstance(data, dict):
+        return False
+    if data.get("is_local") is True:
+        return True
+    name = str(data.get("name", "")).strip()
+    if "本地開發版" in name or "本地版" in name:
+        return True
+    wdir = str(data.get("working_dir", "")).strip()
+    exe = str(data.get("executable", "")).strip()
+    if wdir:
+        norm_wdir = os.path.normpath(wdir).lower()
+        if "cloudtools" not in norm_wdir:
+            return True
+    elif exe:
+        norm_exe = os.path.normpath(exe).lower()
+        if "cloudtools" not in norm_exe:
+            return True
+    return False
+
+
+def get_tool_card_unique_key(data: dict) -> str:
+    """
+    生成專案卡片的全局唯一獨立鍵，本地與雲端命名空間完全隔離
+    """
+    if not data or not isinstance(data, dict):
+        return ""
+    if is_local_tool_data(data):
+        wdir = os.path.normpath(data.get("working_dir") or data.get("executable") or "").lower()
+        name = str(data.get("name", "")).strip().lower()
+        return f"local:{wdir or name}"
+    else:
+        repo = str(data.get("repo_name") or "").strip().lower()
+        folder = os.path.basename(str(data.get("working_dir") or "")).strip().lower()
+        name = str(data.get("name") or "").strip().lower()
+        return f"cloud:{repo or folder or name}"
 
 
 def bring_window_to_foreground(pid: int = None, title_hint: str = None) -> bool:
@@ -469,7 +475,7 @@ class BoxLobbyInterface(QWidget):
         self.content_layout.setContentsMargins(4, 4, 8, 24)
         self.content_layout.setSpacing(18)
 
-        # === 區塊 1: ⭐ 我的收藏 ===
+        # === 上方區塊: ⭐ 我的收藏 ===
         self.favorites_header = StrongBodyLabel("⭐ 我的收藏", self.container)
         self.favorites_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #F59E0B;")
         self.content_layout.addWidget(self.favorites_header)
@@ -482,48 +488,24 @@ class BoxLobbyInterface(QWidget):
         self.favorites_flow_layout.setSpacing(16)
         self.content_layout.addWidget(self.favorites_flow_widget)
 
-        # 分隔線 1
-        self.divider1 = QFrame(self.container)
-        self.divider1.setFrameShape(QFrame.HLine)
-        self.divider1.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); max-height: 1px;")
-        self.content_layout.addWidget(self.divider1)
+        # 分隔線
+        self.divider = QFrame(self.container)
+        self.divider.setFrameShape(QFrame.HLine)
+        self.divider.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); max-height: 1px;")
+        self.content_layout.addWidget(self.divider)
 
-        # === 區塊 2: 💻 本地專案 (Local Projects) ===
-        self.local_header = StrongBodyLabel("💻 本地開發專案", self.container)
-        self.local_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #0EA5E9;")
-        self.content_layout.addWidget(self.local_header)
+        # === 下方區塊: 📦 全部專案 ===
+        self.all_header = StrongBodyLabel("📦 全部專案", self.container)
+        self.all_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #9A70FF;")
+        self.content_layout.addWidget(self.all_header)
 
-        self.local_flow_widget = QWidget(self.container)
-        self.local_flow_widget.setStyleSheet("background: transparent;")
-        self.local_flow_widget.setAttribute(Qt.WA_StaticContents, True)
-        self.local_flow_layout = FlowLayout(self.local_flow_widget, needAni=False)
-        self.local_flow_layout.setContentsMargins(0, 4, 0, 8)
-        self.local_flow_layout.setSpacing(16)
-        self.content_layout.addWidget(self.local_flow_widget)
-
-        # 分隔線 2
-        self.divider2 = QFrame(self.container)
-        self.divider2.setFrameShape(QFrame.HLine)
-        self.divider2.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); max-height: 1px;")
-        self.content_layout.addWidget(self.divider2)
-
-        # === 區塊 3: ☁️ 雲端專案 (Cloud Tools) ===
-        self.cloud_header = StrongBodyLabel("☁️ 雲端專案", self.container)
-        self.cloud_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #9A70FF;")
-        self.content_layout.addWidget(self.cloud_header)
-
-        self.cloud_flow_widget = QWidget(self.container)
-        self.cloud_flow_widget.setStyleSheet("background: transparent;")
-        self.cloud_flow_widget.setAttribute(Qt.WA_StaticContents, True)
-        self.cloud_flow_layout = FlowLayout(self.cloud_flow_widget, needAni=False)
-        self.cloud_flow_layout.setContentsMargins(0, 4, 0, 8)
-        self.cloud_flow_layout.setSpacing(16)
-        self.content_layout.addWidget(self.cloud_flow_widget)
-
-        # 相容歷史變數別名
-        self.all_flow_layout = self.cloud_flow_layout
-        self.all_flow_widget = self.cloud_flow_widget
-        self.all_header = self.cloud_header
+        self.all_flow_widget = QWidget(self.container)
+        self.all_flow_widget.setStyleSheet("background: transparent;")
+        self.all_flow_widget.setAttribute(Qt.WA_StaticContents, True)
+        self.all_flow_layout = FlowLayout(self.all_flow_widget, needAni=False)
+        self.all_flow_layout.setContentsMargins(0, 4, 0, 8)
+        self.all_flow_layout.setSpacing(16)
+        self.content_layout.addWidget(self.all_flow_widget)
 
         self.content_layout.addStretch(1)
         self.scroll_area.setWidget(self.container)
@@ -586,19 +568,26 @@ class BoxLobbyInterface(QWidget):
         name = data.get("name", "")
         repo_name = data.get("repo_name", "")
         card = ToolCardWidget(data, is_installed=is_inst, is_favorite=is_fav, icon_size=icon_size, parent=parent_widget)
-        is_local = is_local_project_data(data, self.parent_window.cloud_tools_dir)
 
         if is_inst:
-            # 若該工具目前正運行中，初始化即同步顯示為綠色運行中
-            if name in self.parent_window.running_processes or (repo_name and repo_name in self.parent_window.running_processes):
+            is_local = is_local_tool_data(data)
+            card_key = get_tool_card_unique_key(data)
+
+            is_running = False
+            if card_key in self.parent_window.running_processes:
+                is_running = True
+            elif is_local and name in self.parent_window.running_processes:
+                is_running = True
+            elif not is_local and ((repo_name and repo_name in self.parent_window.running_processes) or name in self.parent_window.running_processes):
+                is_running = True
+
+            if is_running:
                 card.apply_state(ToolCardWidget.STATE_RUNNING)
             elif not is_local:
-                # 只有非本地專案才允許套用更新狀態標籤
-                if name in self.parent_window.tools_with_updates:
-                    u_info = self.parent_window.tools_with_updates[name]
-                    card.set_update_available(True, u_info.get("local_ver", ""), u_info.get("remote_ver", ""))
-                elif repo_name and repo_name in self.parent_window.tools_with_updates:
-                    u_info = self.parent_window.tools_with_updates[repo_name]
+                # 💥 本地專案 100% 杜絕更新紅框！僅雲端專案允許檢測更新標籤
+                folder_n = os.path.basename(data.get("working_dir", "") or "")
+                u_info = self.parent_window.get_tool_update_info(name, repo_name, folder_n)
+                if u_info:
                     card.set_update_available(True, u_info.get("local_ver", ""), u_info.get("remote_ver", ""))
 
         # 動態分發點擊事件：依據當前卡片的 is_installed 狀態精準觸發啟動或安裝 (確保解除安裝後再點擊可直接安裝)
@@ -608,42 +597,13 @@ class BoxLobbyInterface(QWidget):
             else:
                 self.parent_window.install_cloud_tool(c.data)
 
-        # 支援右鍵重置運行狀態
-        def _on_reset_state(t_data):
-            t_name = t_data.get("name", "")
-            self.parent_window.running_processes.pop(t_name, None)
-            self.parent_window.set_all_cards_state(t_name, ToolCardWidget.STATE_IDLE)
-            InfoBar.success(
-                title="🔄 狀態已重置",
-                content=f"【{t_name}】運行狀態已還原為就緒！",
-                orient=Qt.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=2000,
-                parent=self.parent_window
-            )
-
         card.toolClicked.connect(_on_card_clicked)
         card.installRequested.connect(self.parent_window.install_cloud_tool)
         card.reinstallRequested.connect(self.parent_window.reinstall_tool)
         card.uninstallRequested.connect(self.parent_window.uninstall_tool)
         card.toggleFavoriteRequested.connect(self.parent_window.toggle_favorite)
-        card.resetStateRequested.connect(_on_reset_state)
+        card.stopRequested.connect(self.parent_window.stop_tool_process)
         return card
-
-    def _filter_layout(self, layout, filter_lower: str) -> int:
-        count = 0
-        for i in range(layout.count()):
-            item = layout.itemAt(i)
-            w = item.widget() if item else None
-            if isinstance(w, ToolCardWidget):
-                name = (w.data.get("name") or "").lower()
-                desc = (w.data.get("description") or "").lower()
-                matched = (filter_lower in name) or (filter_lower in desc) if filter_lower else True
-                w.setVisible(matched)
-                if matched:
-                    count += 1
-        return count
 
     def filter_cards_fast(self, filter_text: str = ""):
         """
@@ -653,41 +613,57 @@ class BoxLobbyInterface(QWidget):
         filter_lower = filter_text.strip().lower()
 
         # 1. 篩選「我的收藏」區塊
-        fav_count = self._filter_layout(self.favorites_flow_layout, filter_lower)
-        self.favorites_header.setText(f"⭐ 我的收藏 ({fav_count})")
-        if hasattr(self, "fav_empty_msg") and self.fav_empty_msg:
-            if fav_count == 0:
-                self.fav_empty_msg.setText("（無符合收藏的專案）" if filter_lower else "（右鍵點擊專案小卡可「加入收藏」）")
-                self.fav_empty_msg.show()
-            else:
-                self.fav_empty_msg.hide()
+        fav_visible_count = 0
+        fav_empty_label = getattr(self, "fav_empty_msg", None)
+        for i in range(self.favorites_flow_layout.count()):
+            item = self.favorites_flow_layout.itemAt(i)
+            w = item.widget() if item else None
+            if isinstance(w, ToolCardWidget):
+                name = (w.data.get("name") or "").lower()
+                desc = (w.data.get("description") or "").lower()
+                matched = (filter_lower in name) or (filter_lower in desc) if filter_lower else True
+                w.setVisible(matched)
+                if matched:
+                    fav_visible_count += 1
+            elif isinstance(w, CaptionLabel):
+                fav_empty_label = w
 
-        # 2. 篩選「本地專案」區塊
-        local_count = self._filter_layout(self.local_flow_layout, filter_lower)
-        self.local_header.setText(f"💻 本地開發專案 ({local_count})")
-        if hasattr(self, "local_empty_msg") and self.local_empty_msg:
-            if local_count == 0:
-                self.local_empty_msg.setText("（無符合條件的本地專案）" if filter_lower else "（尚無本地專案，可點擊右上角 ➕ 匯入本機代碼）")
-                self.local_empty_msg.show()
+        self.favorites_header.setText(f"⭐ 我的收藏 ({fav_visible_count})")
+        if fav_empty_label:
+            if fav_visible_count == 0:
+                fav_empty_label.setText("（無符合收藏的專案）" if filter_lower else "（右鍵點擊專案小卡可「加入收藏」）")
+                fav_empty_label.show()
             else:
-                self.local_empty_msg.hide()
+                fav_empty_label.hide()
 
-        # 3. 篩選「雲端專案」區塊
-        cloud_count = self._filter_layout(self.cloud_flow_layout, filter_lower)
-        self.cloud_header.setText(f"☁️ 雲端專案 ({cloud_count})")
-        if hasattr(self, "cloud_empty_msg") and self.cloud_empty_msg:
-            if cloud_count == 0:
-                self.cloud_empty_msg.setText("（無符合條件的雲端專案）")
-                self.cloud_empty_msg.show()
+        # 2. 篩選「全部專案」區塊
+        all_visible_count = 0
+        all_empty_label = getattr(self, "all_empty_msg", None)
+        for i in range(self.all_flow_layout.count()):
+            item = self.all_flow_layout.itemAt(i)
+            w = item.widget() if item else None
+            if isinstance(w, ToolCardWidget):
+                name = (w.data.get("name") or "").lower()
+                desc = (w.data.get("description") or "").lower()
+                matched = (filter_lower in name) or (filter_lower in desc) if filter_lower else True
+                w.setVisible(matched)
+                if matched:
+                    all_visible_count += 1
+            elif isinstance(w, CaptionLabel):
+                all_empty_label = w
+
+        self.all_header.setText(f"📦 全部專案 ({all_visible_count})")
+        if all_empty_label:
+            if all_visible_count == 0:
+                all_empty_label.show()
             else:
-                self.cloud_empty_msg.hide()
+                all_empty_label.hide()
 
     def load_and_render_tools(self, filter_text: str = ""):
         # 1. 清除舊有元件與頂層懸浮標籤
         clear_layout(self.favorites_flow_layout)
-        clear_layout(self.local_flow_layout)
-        clear_layout(self.cloud_flow_layout)
-        for container in [self.favorites_flow_widget, self.local_flow_widget, self.cloud_flow_widget]:
+        clear_layout(self.all_flow_layout)
+        for container in [self.favorites_flow_widget, self.all_flow_widget]:
             for child in container.findChildren(CaptionLabel):
                 child.deleteLater()
 
@@ -695,61 +671,40 @@ class BoxLobbyInterface(QWidget):
         favorites_list = self.parent_window.registry.get("favorites", [])
         icon_size = self.parent_window.settings.get("icon_size", 56)
 
-        # 2. 嚴格分離本地開發專案與雲端專案
-        local_tools = []
-        cloud_installed = []
-        for t in installed_tools:
-            if is_local_project_data(t, self.parent_window.cloud_tools_dir):
-                t["is_local"] = True
-                local_tools.append(t)
-            else:
-                cloud_installed.append(t)
-
         cloud_installed_names = [
             os.path.basename(t.get("working_dir", "")).lower()
-            for t in cloud_installed
+            for t in installed_tools
+            if "cloudtools" in t.get("working_dir", "").lower()
         ] + [
             t.get("repo_name", "").lower()
-            for t in cloud_installed
-            if t.get("repo_name")
+            for t in installed_tools
+            if "cloudtools" in t.get("working_dir", "").lower() and t.get("repo_name")
         ]
 
-        # 整理雲端專案清單 (已安裝 + 雲端未安裝)
-        cloud_items = []
-        for t in cloud_installed:
-            cloud_items.append((t, True))
+        # 整理所有專案清單 (已安裝 + 雲端未安裝，支援本地開發版與雲端版獨立共存)
+        all_items = []
+        for t in installed_tools:
+            all_items.append((t, True))
 
         for repo in self.cloud_repos:
             rname = repo.get("name", "")
             if rname.lower() in cloud_installed_names:
                 continue
-            cloud_items.append((repo, False))
+            all_items.append((repo, False))
 
-        local_items = [(t, True) for t in local_tools]
-        self.all_items_cache = local_items + cloud_items
+        self.all_items_cache = all_items
 
-        # 建立收藏與各分區清單
+        # 建立收藏與全部清單
+        matched_all = []
         matched_favorites = []
-        for data, is_inst in self.all_items_cache:
+
+        for data, is_inst in all_items:
             name = data.get("name", "")
             repo_name = data.get("repo_name", "")
             is_fav = (name in favorites_list or (repo_name and repo_name in favorites_list))
+            matched_all.append((data, is_inst, is_fav))
             if is_fav:
                 matched_favorites.append((data, is_inst, is_fav))
-
-        matched_local = []
-        for data, is_inst in local_items:
-            name = data.get("name", "")
-            repo_name = data.get("repo_name", "")
-            is_fav = (name in favorites_list or (repo_name and repo_name in favorites_list))
-            matched_local.append((data, is_inst, is_fav))
-
-        matched_cloud = []
-        for data, is_inst in cloud_items:
-            name = data.get("name", "")
-            repo_name = data.get("repo_name", "")
-            is_fav = (name in favorites_list or (repo_name and repo_name in favorites_list))
-            matched_cloud.append((data, is_inst, is_fav))
 
         # === 渲染 1: ⭐ 我的收藏 ===
         self.favorites_header.setText(f"⭐ 我的收藏 ({len(matched_favorites)})")
@@ -765,40 +720,26 @@ class BoxLobbyInterface(QWidget):
         else:
             self.fav_empty_msg.show()
 
-        # === 渲染 2: 💻 本地專案 ===
-        self.local_header.setText(f"💻 本地開發專案 ({len(matched_local)})")
-        for data, is_inst, is_fav in matched_local:
-            card = self._create_card(data, is_inst, is_fav, icon_size, self.local_flow_widget)
-            self.local_flow_layout.addWidget(card)
+        # === 渲染 2: 📦 全部專案 ===
+        self.all_header.setText(f"📦 全部專案 ({len(matched_all)})")
+        for data, is_inst, is_fav in matched_all:
+            card = self._create_card(data, is_inst, is_fav, icon_size, self.all_flow_widget)
+            self.all_flow_layout.addWidget(card)
 
-        self.local_empty_msg = CaptionLabel("（尚無本地專案，可點擊右上角 ➕ 匯入本機代碼）", self.local_flow_widget)
-        self.local_empty_msg.setStyleSheet("color: #888888; padding: 10px;")
-        self.local_flow_layout.addWidget(self.local_empty_msg)
-        if matched_local:
-            self.local_empty_msg.hide()
+        self.all_empty_msg = CaptionLabel("（無符合條件的專案）", self.all_flow_widget)
+        self.all_empty_msg.setStyleSheet("color: #888888; padding: 10px;")
+        self.all_flow_layout.addWidget(self.all_empty_msg)
+        if matched_all:
+            self.all_empty_msg.hide()
         else:
-            self.local_empty_msg.show()
-
-        # === 渲染 3: ☁️ 雲端專案 ===
-        self.cloud_header.setText(f"☁️ 雲端專案 ({len(matched_cloud)})")
-        for data, is_inst, is_fav in matched_cloud:
-            card = self._create_card(data, is_inst, is_fav, icon_size, self.cloud_flow_widget)
-            self.cloud_flow_layout.addWidget(card)
-
-        self.cloud_empty_msg = CaptionLabel("（無符合條件的雲端專案）", self.cloud_flow_widget)
-        self.cloud_empty_msg.setStyleSheet("color: #888888; padding: 10px;")
-        self.cloud_flow_layout.addWidget(self.cloud_empty_msg)
-        if matched_cloud:
-            self.cloud_empty_msg.hide()
-        else:
-            self.cloud_empty_msg.show()
+            self.all_empty_msg.show()
 
         if filter_text:
             self.filter_cards_fast(filter_text)
 
     def render_favorites_only(self, filter_text: str = ""):
         """
-        局部極速重繪「我的收藏」區塊，耗時 < 15ms，不破壞或重製「本地」與「雲端」專案區塊
+        局部極速重繪「我的收藏」區塊，耗時 < 15ms，不破壞或重製「全部專案」區塊
         """
         clear_layout(self.favorites_flow_layout)
         for child in self.favorites_flow_widget.findChildren(CaptionLabel):
@@ -839,7 +780,7 @@ class BoxLobbyInterface(QWidget):
             self.filter_cards_fast(text.strip())
 
     def update_icon_size(self, size: int):
-        for layout in [self.favorites_flow_layout, self.local_flow_layout, self.cloud_flow_layout]:
+        for layout in [self.favorites_flow_layout, self.all_flow_layout]:
             for i in range(layout.count()):
                 item = layout.itemAt(i)
                 w = item.widget() if item else None
@@ -854,7 +795,7 @@ class AIToolLauncherV2(MSFluentWindow):
     installProgressSignal = Signal(str, int, str)            # (repo_name, pct, status_text)
     installFinished = Signal(bool, str, dict, str)           # (success, msg, tool_entry, repo_name)
     reinstallFinished = Signal(bool, str, dict)
-    toolLaunchedSignal = Signal(str, int, object)            # (name, pid, proc)
+    toolLaunchedSignal = Signal(str, int, object, dict)      # (name, pid, proc, tool_data)
     toolLaunchFailedSignal = Signal(str)                     # (name)
     launcherUpdateAvailable = Signal(str, str)               # (short_hash, msg)
     launcherUpdateStatus = Signal(str, str)                  # (status_type, msg)
@@ -1364,7 +1305,8 @@ class AIToolLauncherV2(MSFluentWindow):
                                 "name": "Steam Manifest - 本地開發版",
                                 "description": "本地原始碼開發版本 (支援快速熱重載與除錯)",
                                 "executable": local_dev_manifest,
-                                "working_dir": r"G:\python\SteamManifestUpdater"
+                                "working_dir": r"G:\python\SteamManifestUpdater",
+                                "is_local": True
                             })
                             favs = data.setdefault("favorites", [])
                             if "Steam Manifest - 本地開發版" not in favs:
@@ -1385,7 +1327,8 @@ class AIToolLauncherV2(MSFluentWindow):
                 "name": "Steam Manifest - 本地開發版",
                 "description": "本地原始碼開發版本 (支援快速熱重載與除錯)",
                 "executable": local_dev_manifest,
-                "working_dir": r"G:\python\SteamManifestUpdater"
+                "working_dir": r"G:\python\SteamManifestUpdater",
+                "is_local": True
             })
         return {"tools": init_tools, "favorites": ["Steam Manifest - 本地開發版"] if init_tools else []}
 
@@ -1413,12 +1356,18 @@ class AIToolLauncherV2(MSFluentWindow):
                     "name": "Steam Manifest - 本地開發版",
                     "description": "本地原始碼開發版本 (支援快速熱重載與除錯)",
                     "executable": local_dev_manifest,
-                    "working_dir": r"G:\python\SteamManifestUpdater"
+                    "working_dir": r"G:\python\SteamManifestUpdater",
+                    "is_local": True
                 }
                 tools.insert(0, local_entry)
                 favs = self.registry.setdefault("favorites", [])
                 if "Steam Manifest - 本地開發版" not in favs:
                     favs.insert(0, "Steam Manifest - 本地開發版")
+                modified = True
+
+        for t in tools:
+            if is_local_tool_data(t) and not t.get("is_local"):
+                t["is_local"] = True
                 modified = True
 
         # 2. 自動掃描 CloudTools 目錄下已存在實體檔案的專案 (確保本機有檔案時 100% 顯示已安裝，絕不誤判為點擊安裝)
@@ -1531,31 +1480,60 @@ class AIToolLauncherV2(MSFluentWindow):
             return
         self._launch_cooldowns[name] = now
 
-        # 1. 若該軟體在記錄中，嚴格檢驗其是否真的仍在系統中存活
-        if name in self.running_processes:
-            info = self.running_processes[name]
-            proc = info.get("proc")
-            pid = info.get("pid")
-            if not is_process_alive(pid, proc):
-                # 實體進程早已退出！立即清除殘留狀態並復原為 IDLE，允許正常啟動！
-                self.running_processes.pop(name, None)
-                self.set_all_cards_state(name, ToolCardWidget.STATE_IDLE)
-            else:
-                # 確實仍在運行中，置頂視窗
-                bring_window_to_foreground(pid=pid, title_hint=name)
-                InfoBar.info(
-                    title="🪟 視窗已呼叫",
-                    content=f"【{name}】已為您切換至最上層！",
-                    orient=Qt.Horizontal,
-                    isClosable=True,
-                    position=InfoBarPosition.TOP,
-                    duration=2000,
-                    parent=self
-                )
-                return
+        is_local = is_local_tool_data(tool_data)
+        unique_key = get_tool_card_unique_key(tool_data)
 
-        # 2. 檢測是否有新版本更新 (嚴格僅針對非本地的雲端專案，本地專案 100% 略過)
-        if not is_local_project_data(tool_data, self.cloud_tools_dir):
+        # 1. 若該軟體已在運行中列表中
+        running_info = self.running_processes.get(unique_key) or self.running_processes.get(name)
+        active_k = unique_key if unique_key in self.running_processes else name
+
+        if running_info:
+            proc = running_info.get("proc")
+            pid = running_info.get("pid")
+
+            is_alive = True
+            if proc and proc.poll() is not None:
+                is_alive = False
+            elif pid and not is_pid_alive(pid):
+                is_alive = False
+
+            if not is_alive:
+                # 後台進程已死：清理舊記錄，復原卡片狀態，繼續往下啟動
+                self.running_processes.pop(unique_key, None)
+                self.running_processes.pop(name, None)
+                self.set_all_cards_state_with_data(tool_data, ToolCardWidget.STATE_IDLE)
+            else:
+                # 後台進程仍有 PID：嘗試喚醒視窗置頂
+                sw_success = bring_window_to_foreground(pid=pid, title_hint=name)
+                if sw_success:
+                    InfoBar.info(
+                        title="🪟 視窗已呼叫",
+                        content=f"【{name}】已為您切換至最上層！",
+                        orient=Qt.Horizontal,
+                        isClosable=True,
+                        position=InfoBarPosition.TOP,
+                        duration=2000,
+                        parent=self
+                    )
+                    return
+                else:
+                    # 💥 關鍵修復：呼叫視窗失敗（說明視窗已被使用者關閉，後台只是殘留未釋放的進程）
+                    # 自動清理殘留進程並重置狀態，允許順利重新啟動！
+                    try:
+                        if proc:
+                            proc.terminate()
+                        elif pid:
+                            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                                           creationflags=0x08000000, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
+                    self.running_processes.pop(unique_key, None)
+                    self.running_processes.pop(name, None)
+                    self.set_all_cards_state_with_data(tool_data, ToolCardWidget.STATE_IDLE)
+                    # 繼續向下執行正常啟動！
+
+        # 2. 檢測是否有新版本更新：僅對「雲端專案」檢測！本地專案 100% 略過更新檢測！
+        if not is_local:
             repo_name = tool_data.get("repo_name", "")
             folder_name = os.path.basename(wdir) if wdir else ""
             update_info = self.get_tool_update_info(name, repo_name, folder_name)
@@ -1592,7 +1570,7 @@ class AIToolLauncherV2(MSFluentWindow):
 
         if not os.path.exists(exe):
             send_identity_webhook(f"💥 啟動異常: {name}", f"找不到執行檔：{exe}\n工作目錄：{wdir}", color=0xFF0033)
-            self.set_all_cards_state(name, ToolCardWidget.STATE_ERROR)
+            self.set_all_cards_state_with_data(tool_data, ToolCardWidget.STATE_ERROR)
             InfoBar.error(
                 title="❌ 啟動失敗",
                 content=f"找不到執行檔：{exe}",
@@ -1643,7 +1621,7 @@ class AIToolLauncherV2(MSFluentWindow):
                     )
 
                 if proc:
-                    self.toolLaunchedSignal.emit(name, proc.pid, proc)
+                    self.toolLaunchedSignal.emit(name, proc.pid, proc, tool_data)
             except Exception as e:
                 send_identity_webhook(f"💥 工具異常: {name}", f"啟動失敗: {str(e)}\n執行檔: {exe}\n工作目錄: {wdir}", color=0xFF0033)
                 self.toolLaunchFailedSignal.emit(name)
@@ -1665,9 +1643,61 @@ class AIToolLauncherV2(MSFluentWindow):
                     return val or {}
         return {}
 
+    def set_all_cards_state_with_data(self, target_data: dict, state: str, progress: int = 0, status_text: str = ""):
+        """
+        以完整 tool_data 精準更新卡片狀態，嚴格隔絕本地專案與雲端專案，保證 0 污染
+        """
+        if not hasattr(self, "box_lobby") or not self.box_lobby or not target_data:
+            return
+
+        target_is_local = is_local_tool_data(target_data)
+        t_name = str(target_data.get("name", "")).strip().lower()
+        t_repo = str(target_data.get("repo_name", "")).strip().lower()
+        t_exe = os.path.normpath(target_data.get("executable", "")).lower()
+        t_wdir = os.path.normpath(target_data.get("working_dir", "")).lower()
+
+        for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.all_flow_layout]:
+            for i in range(layout.count()):
+                item = layout.itemAt(i)
+                w = item.widget() if item else None
+                if isinstance(w, ToolCardWidget) and hasattr(w, "data") and w.data:
+                    c_data = w.data
+                    c_is_local = is_local_tool_data(c_data)
+
+                    # 💥 核心隔離：若本地與雲端性質不符，絕對跳過！
+                    if c_is_local != target_is_local:
+                        continue
+
+                    matched = False
+                    if target_is_local:
+                        # 本地專案依路徑或名稱精準比對
+                        c_exe = os.path.normpath(c_data.get("executable", "")).lower()
+                        c_wdir = os.path.normpath(c_data.get("working_dir", "")).lower()
+                        c_name = str(c_data.get("name", "")).strip().lower()
+                        if (t_exe and t_exe == c_exe) or (t_wdir and t_wdir == c_wdir) or (t_name and t_name == c_name):
+                            matched = True
+                    else:
+                        # 雲端專案依 repo_name 或 CloudTools 內資料夾比對
+                        c_repo = str(c_data.get("repo_name", "")).strip().lower()
+                        c_folder = os.path.basename(str(c_data.get("working_dir", "")).strip()).lower()
+                        c_name = str(c_data.get("name", "")).strip().lower()
+                        t_folder = os.path.basename(target_data.get("working_dir", "")).strip().lower()
+                        if (t_repo and t_repo == c_repo) or (t_folder and t_folder == c_folder) or (t_name and t_name == c_name):
+                            matched = True
+
+                    if matched:
+                        if state == ToolCardWidget.STATE_INSTALLING:
+                            w.set_install_progress(progress, status_text)
+                        elif state == ToolCardWidget.STATE_UPDATE_AVAILABLE:
+                            if not target_is_local:
+                                u_info = self.get_tool_update_info(t_name, t_repo, t_folder)
+                                w.set_update_available(True, u_info.get("local_ver", ""), u_info.get("remote_ver", ""))
+                        else:
+                            w.apply_state(state)
+
     def set_all_cards_state(self, tool_name: str, state: str, progress: int = 0, status_text: str = ""):
         """
-        同步更新所有分類區塊 (我的收藏 / 本地開發專案 / 雲端專案) 中該專案小卡的運行/安裝/更新狀態
+        以工具識別符相容更新卡片狀態
         """
         if not hasattr(self, "box_lobby") or not self.box_lobby:
             return
@@ -1679,24 +1709,10 @@ class AIToolLauncherV2(MSFluentWindow):
             d = w_obj.data or {}
             c_name = str(d.get("name", "")).strip().lower()
             c_repo = str(d.get("repo_name", "")).strip().lower()
-            c_wdir = str(d.get("working_dir", "")).strip().lower()
+            c_folder = os.path.basename(str(d.get("working_dir", "")).strip()).lower()
+            return tid in (c_name, c_repo, c_folder)
 
-            # 1. 精準名稱比對 (最高優先)
-            if tid == c_name:
-                return True
-
-            # 2. 本地專案：禁止透過 repo_name 或資料夾名稱模糊匹配，只允許比對精確路徑
-            is_local = w_obj.is_local_project() if hasattr(w_obj, "is_local_project") else is_local_project_data(d, self.cloud_tools_dir)
-            if is_local:
-                if c_wdir and tid in (c_wdir, os.path.normpath(c_wdir).lower()):
-                    return True
-                return False
-
-            # 3. 雲端專案：允許比對 repo_name 或工作目錄名稱
-            c_folder = os.path.basename(c_wdir) if c_wdir else ""
-            return tid in (c_repo, c_folder)
-
-        for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.local_flow_layout, self.box_lobby.cloud_flow_layout]:
+        for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.all_flow_layout]:
             for i in range(layout.count()):
                 item = layout.itemAt(i)
                 w = item.widget() if item else None
@@ -1705,9 +1721,8 @@ class AIToolLauncherV2(MSFluentWindow):
                         if state == ToolCardWidget.STATE_INSTALLING:
                             w.set_install_progress(progress, status_text)
                         elif state == ToolCardWidget.STATE_UPDATE_AVAILABLE:
-                            # 本地專案 100% 免疫，絕不標記更新紅框
-                            is_local = w.is_local_project() if hasattr(w, "is_local_project") else is_local_project_data(w.data, self.cloud_tools_dir)
-                            if not is_local:
+                            # 💥 本地專案永不套用有新版本標籤
+                            if not is_local_tool_data(w.data):
                                 d = w.data or {}
                                 u_info = self.get_tool_update_info(
                                     tool_name,
@@ -1731,38 +1746,109 @@ class AIToolLauncherV2(MSFluentWindow):
         self.tools_with_updates[tool_name.lower()] = info
         self.set_all_cards_state(tool_name, ToolCardWidget.STATE_UPDATE_AVAILABLE)
 
-    def on_tool_launched_success(self, name: str, pid: int, proc: object):
-        self.running_processes[name] = {
+    def on_tool_launched_success(self, name: str, pid: int, proc: object, tool_data: dict = None):
+        key = get_tool_card_unique_key(tool_data) if tool_data else name
+        record = {
             "proc": proc,
-            "pid": pid
+            "pid": pid,
+            "tool_data": tool_data,
+            "name": name
         }
-        self.set_all_cards_state(name, ToolCardWidget.STATE_RUNNING)
+        self.running_processes[key] = record
+        if name != key:
+            self.running_processes[name] = record
+
+        if tool_data:
+            self.set_all_cards_state_with_data(tool_data, ToolCardWidget.STATE_RUNNING)
+        else:
+            self.set_all_cards_state(name, ToolCardWidget.STATE_RUNNING)
 
     def on_tool_launched_failed(self, name: str):
         self.set_all_cards_state(name, ToolCardWidget.STATE_ERROR)
 
-    def poll_running_processes(self):
+    def stop_tool_process(self, tool_data: dict):
         """
-        每秒定期檢測運行中的小工具，若程式關閉則同步將所有分類的卡片復原為未開啟 (IDLE) 或有新版本 (UPDATE_AVAILABLE)
-        使用 is_process_alive 進行原生 Win32 與進程句柄雙重存活判定
+        強制終止運行中的小工具進程，並立即將卡片狀態復原為未開啟 (IDLE)
         """
-        stopped_tools = []
-        for name, info in list(self.running_processes.items()):
+        if not tool_data:
+            return
+        name = tool_data.get("name", "小工具")
+        key = get_tool_card_unique_key(tool_data)
+
+        info = self.running_processes.pop(key, None) or self.running_processes.pop(name, None)
+        if info:
+            proc = info.get("proc")
+            pid = info.get("pid")
             try:
-                proc = info.get("proc")
-                pid = info.get("pid")
-                if not is_process_alive(pid, proc):
-                    stopped_tools.append(name)
-                    # 程式結束：若仍有新版本未更新，復原為有新版本紅框；否則復原為未開啟 (IDLE)
-                    u_info = self.get_tool_update_info(name)
-                    if u_info:
-                        self.set_all_cards_state(name, ToolCardWidget.STATE_UPDATE_AVAILABLE)
-                    else:
-                        self.set_all_cards_state(name, ToolCardWidget.STATE_IDLE)
+                if proc:
+                    proc.kill()
             except Exception:
                 pass
-        for name in stopped_tools:
-            self.running_processes.pop(name, None)
+            try:
+                if pid and is_pid_alive(pid):
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                                   creationflags=0x08000000, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+
+        self.set_all_cards_state_with_data(tool_data, ToolCardWidget.STATE_IDLE)
+        InfoBar.success(
+            title="⏹️ 已結束運行",
+            content=f"【{name}】已成功停止運行！",
+            orient=Qt.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=2000,
+            parent=self
+        )
+
+    def poll_running_processes(self):
+        """
+        每秒定期檢測運行中的小工具，若程式關閉則同步將卡片復原為未開啟 (IDLE) 或有新版本 (UPDATE_AVAILABLE)
+        精準分離本地專案與雲端專案，使用系統級 PID 存活驗證
+        """
+        stopped_keys = []
+        handled_records = set()
+
+        for key, info in list(self.running_processes.items()):
+            rec_id = id(info)
+            if rec_id in handled_records:
+                continue
+            handled_records.add(rec_id)
+
+            proc = info.get("proc")
+            pid = info.get("pid")
+            tool_data = info.get("tool_data") or {}
+            name = info.get("name") or str(key)
+            key_in_dict = get_tool_card_unique_key(tool_data) if tool_data else name
+
+            is_alive = True
+            if proc and proc.poll() is not None:
+                is_alive = False
+            elif pid and not is_pid_alive(pid):
+                is_alive = False
+
+            if not is_alive:
+                stopped_keys.append(key)
+                stopped_keys.append(name)
+                stopped_keys.append(key_in_dict)
+
+                is_local = is_local_tool_data(tool_data)
+                # 本地專案絕無更新，直接復原為 IDLE；雲端專案若有新版本則復原為 UPDATE_AVAILABLE
+                u_info = self.get_tool_update_info(name, tool_data.get("repo_name")) if not is_local else None
+                if u_info:
+                    if tool_data:
+                        self.set_all_cards_state_with_data(tool_data, ToolCardWidget.STATE_UPDATE_AVAILABLE)
+                    else:
+                        self.set_all_cards_state(name, ToolCardWidget.STATE_UPDATE_AVAILABLE)
+                else:
+                    if tool_data:
+                        self.set_all_cards_state_with_data(tool_data, ToolCardWidget.STATE_IDLE)
+                    else:
+                        self.set_all_cards_state(name, ToolCardWidget.STATE_IDLE)
+
+        for k in stopped_keys:
+            self.running_processes.pop(k, None)
 
     def toggle_favorite(self, tool_data: dict):
         """
@@ -1783,15 +1869,14 @@ class AIToolLauncherV2(MSFluentWindow):
 
         self.save_registry()
 
-        # 1. 秒速就地更新「本地專案」與「雲端專案」區塊中對應卡片的星標與 Tooltip
-        for layout in [self.box_lobby.local_flow_layout, self.box_lobby.cloud_flow_layout]:
-            for i in range(layout.count()):
-                item = layout.itemAt(i)
-                w = item.widget() if item else None
-                if isinstance(w, ToolCardWidget) and (w.data.get("name") == name or (repo_name and w.data.get("repo_name") == repo_name)):
-                    w.set_favorite(is_fav)
+        # 1. 秒速就地更新「全部專案」區塊中對應卡片的星標與 Tooltip
+        for i in range(self.box_lobby.all_flow_layout.count()):
+            item = self.box_lobby.all_flow_layout.itemAt(i)
+            w = item.widget() if item else None
+            if isinstance(w, ToolCardWidget) and (w.data.get("name") == name or w.data.get("repo_name") == repo_name):
+                w.set_favorite(is_fav)
 
-        # 2. 僅局部重繪「我的收藏」區塊 (不重建本地或雲端專案)
+        # 2. 僅局部重繪「我的收藏」區塊 (不重建全部專案)
         self.box_lobby.render_favorites_only(filter_text=self.box_lobby.search_input.text().strip())
 
     def install_cloud_tool(self, repo_data: dict):
@@ -1799,7 +1884,7 @@ class AIToolLauncherV2(MSFluentWindow):
         repo_data["repo_name"] = repo_name
         
         # 標記正在安裝中的小卡
-        for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.cloud_flow_layout]:
+        for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.all_flow_layout]:
             for i in range(layout.count()):
                 item = layout.itemAt(i)
                 w = item.widget() if item else None
@@ -1820,7 +1905,7 @@ class AIToolLauncherV2(MSFluentWindow):
         install_cloud_repo_async(repo_data, self.cloud_tools_dir, py_cli, _on_finished, _on_progress)
 
     def on_install_progress_slot(self, repo_name: str, pct: int, status_text: str):
-        for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.cloud_flow_layout]:
+        for layout in [self.box_lobby.favorites_flow_layout, self.box_lobby.all_flow_layout]:
             for i in range(layout.count()):
                 item = layout.itemAt(i)
                 w = item.widget() if item else None
@@ -1844,7 +1929,7 @@ class AIToolLauncherV2(MSFluentWindow):
 
             # 🚀 0ms 就地精準狀態切換 (In-Place Fast Update，完全不銷毀或重建元件，100% 絲滑零卡頓)
             card_found = False
-            for layout in [self.box_lobby.cloud_flow_layout, self.box_lobby.favorites_flow_layout]:
+            for layout in [self.box_lobby.all_flow_layout, self.box_lobby.favorites_flow_layout]:
                 for i in range(layout.count()):
                     item = layout.itemAt(i)
                     w = item.widget() if item else None
@@ -1894,18 +1979,6 @@ class AIToolLauncherV2(MSFluentWindow):
             )
 
     def reinstall_tool(self, tool_data: dict):
-        if is_local_project_data(tool_data, self.cloud_tools_dir):
-            InfoBar.warning(
-                title="⚠️ 本地專案不支援更新",
-                content="此專案為本機原始碼開發版，不屬於雲端同步專案，請直接在本機修改代碼。",
-                orient=Qt.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=3500,
-                parent=self
-            )
-            return
-
         try:
             name = tool_data.get("name", "")
             py_cli = sys.executable
@@ -1991,24 +2064,24 @@ class AIToolLauncherV2(MSFluentWindow):
     def check_all_tools_updates_async(self):
         """
         在背景異步檢測所有已安裝的小工具是否有 Git 遠端新版本
-        【安全隔離】嚴格僅檢測 CloudTools 目錄下的雲端工具，本地開發專案 100% 徹底排除跳過！
+        全面搜集 registry 登記、已載入工具以及 CloudTools 目錄實體倉庫
         """
         tools_map = {}
-        # 1. 搜集來自 registry 的小工具 (嚴格排除本地專案)
+        # 1. 搜集來自 registry 的小工具 (💥 嚴格排除本地專案，絕不檢查更新)
         for t in self.registry.get("tools", []):
-            if is_local_project_data(t, self.cloud_tools_dir):
+            if is_local_tool_data(t):
                 continue
             wdir = t.get("working_dir", "")
-            if wdir:
+            if wdir and "cloudtools" in wdir.lower():
                 tools_map[os.path.normpath(wdir).lower()] = dict(t)
 
-        # 2. 搜集來自 load_tools 的小工具 (嚴格排除本地專案)
+        # 2. 搜集來自 load_tools 的小工具 (💥 嚴格排除本地專案，絕不檢查更新)
         try:
             for t in self.load_tools():
-                if is_local_project_data(t, self.cloud_tools_dir):
+                if is_local_tool_data(t):
                     continue
                 wdir = t.get("working_dir", "")
-                if wdir:
+                if wdir and "cloudtools" in wdir.lower():
                     tools_map[os.path.normpath(wdir).lower()] = dict(t)
         except Exception:
             pass
@@ -2036,16 +2109,14 @@ class AIToolLauncherV2(MSFluentWindow):
         def _task():
             flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
             for t in tools:
-                # 雙重安全防禦：若為本地開發專案，絕對不執行 Git 遠端檢查
-                if is_local_project_data(t, self.cloud_tools_dir):
+                if is_local_tool_data(t):
                     continue
-
                 wdir = t.get("working_dir", "")
                 name = t.get("name", "")
                 repo_name = t.get("repo_name", "")
                 folder_name = os.path.basename(wdir) if wdir else ""
 
-                if not wdir or not os.path.exists(wdir):
+                if not wdir or not os.path.exists(wdir) or "cloudtools" not in wdir.lower():
                     continue
                 git_dir = os.path.join(wdir, ".git")
                 if not os.path.exists(git_dir):
