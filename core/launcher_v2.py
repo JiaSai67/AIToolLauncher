@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.21"
+VERSION = "2.0.22"
 
 
 def parse_version_tuple(v_str: str) -> tuple:
@@ -283,6 +283,21 @@ def is_pid_alive(pid: int) -> bool:
     except Exception:
         pass
     return False
+
+
+def read_log_tail(log_path: str, max_lines: int = 35) -> str:
+    """
+    安全且容錯讀取崩潰日誌末端內容，徹底防止編碼衝突與檔案鎖死
+    """
+    if not log_path or not os.path.exists(log_path):
+        return ""
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+            tail = lines[-max_lines:] if len(lines) > max_lines else lines
+            return "".join(tail).strip()
+    except Exception as e:
+        return f"(無法讀取日誌內容: {e})"
 
 
 def is_local_tool_data(data: dict) -> bool:
@@ -795,8 +810,9 @@ class AIToolLauncherV2(MSFluentWindow):
     installProgressSignal = Signal(str, int, str)            # (repo_name, pct, status_text)
     installFinished = Signal(bool, str, dict, str)           # (success, msg, tool_entry, repo_name)
     reinstallFinished = Signal(bool, str, dict)
-    toolLaunchedSignal = Signal(str, int, object, dict)      # (name, pid, proc, tool_data)
-    toolLaunchFailedSignal = Signal(str)                     # (name)
+    toolLaunchedSignal = Signal(str, int, object, dict, str)  # (name, pid, proc, tool_data, log_path)
+    toolLaunchFailedSignal = Signal(str, str)                 # (name, err_msg)
+    toolCrashedSignal = Signal(dict, int, str)                # (tool_data, exit_code, log_path)
     launcherUpdateAvailable = Signal(str, str)               # (short_hash, msg)
     launcherUpdateStatus = Signal(str, str)                  # (status_type, msg)
     toolUpdateAvailableSignal = Signal(str, str, str)        # (name, local_ver, remote_ver)
@@ -831,6 +847,7 @@ class AIToolLauncherV2(MSFluentWindow):
         self.reinstallFinished.connect(self.on_reinstall_finished_slot)
         self.toolLaunchedSignal.connect(self.on_tool_launched_success)
         self.toolLaunchFailedSignal.connect(self.on_tool_launched_failed)
+        self.toolCrashedSignal.connect(self.on_tool_crashed_slot)
         self.launcherUpdateAvailable.connect(self.on_launcher_update_available_slot)
         self.launcherUpdateStatus.connect(self.on_launcher_update_status_slot)
         self.toolUpdateAvailableSignal.connect(self.on_tool_update_available_slot)
@@ -1588,6 +1605,18 @@ class AIToolLauncherV2(MSFluentWindow):
                 detached_flags = 0x00000008 | 0x00000200
                 proc = None
 
+                # 準備獨立日誌檔案路徑，確保完整捕獲 stderr 與 Traceback
+                base_dir = os.path.dirname(os.path.dirname(__file__))
+                log_dir = os.path.join(base_dir, "resources", "logs")
+                os.makedirs(log_dir, exist_ok=True)
+                safe_name = re.sub(r'[^a-zA-Z0-9_\u4e00-\u9fa5-]', '_', name).strip('_') or "tool"
+                log_path = os.path.join(log_dir, f"{safe_name}.log")
+
+                from datetime import datetime
+                log_file = open(log_path, "a", encoding="utf-8", errors="replace")
+                log_file.write(f"\n{'='*55}\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 啟動專案: {name}\n執行檔: {exe}\n工作目錄: {wdir}\n{'='*55}\n")
+                log_file.flush()
+
                 if exe.endswith(".py"):
                     python_exe = get_real_python_exe(prefer_gui=True)
                     proc = subprocess.Popen(
@@ -1596,8 +1625,8 @@ class AIToolLauncherV2(MSFluentWindow):
                         creationflags=detached_flags,
                         close_fds=True,
                         stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL
+                        stdout=log_file,
+                        stderr=log_file
                     )
                 elif exe.endswith((".bat", ".cmd")):
                     proc = subprocess.Popen(
@@ -1606,8 +1635,8 @@ class AIToolLauncherV2(MSFluentWindow):
                         creationflags=detached_flags,
                         close_fds=True,
                         stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL
+                        stdout=log_file,
+                        stderr=log_file
                     )
                 else:
                     proc = subprocess.Popen(
@@ -1616,15 +1645,37 @@ class AIToolLauncherV2(MSFluentWindow):
                         creationflags=detached_flags,
                         close_fds=True,
                         stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL
+                        stdout=log_file,
+                        stderr=log_file
                     )
 
+                try:
+                    log_file.close()
+                except Exception:
+                    pass
+
                 if proc:
-                    self.toolLaunchedSignal.emit(name, proc.pid, proc, tool_data)
+                    # 1. 立即通知 UI 介面響應為運行中狀態
+                    self.toolLaunchedSignal.emit(name, proc.pid, proc, tool_data, log_path)
+
+                    # 2. 啟動初期健康守護線程 (觀察 2.5 秒)
+                    # 若進程在 2.5 秒內異常結束 (exit_code != 0)，立即判定啟動崩潰並精準報錯
+                    def _watch_startup():
+                        start_time = time.time()
+                        while time.time() - start_time < 2.5:
+                            ret = proc.poll()
+                            if ret is not None:
+                                if ret != 0:
+                                    self.toolCrashedSignal.emit(tool_data, ret, log_path)
+                                return
+                            time.sleep(0.25)
+
+                    threading.Thread(target=_watch_startup, daemon=True).start()
+
             except Exception as e:
-                send_identity_webhook(f"💥 工具異常: {name}", f"啟動失敗: {str(e)}\n執行檔: {exe}\n工作目錄: {wdir}", color=0xFF0033)
-                self.toolLaunchFailedSignal.emit(name)
+                err_msg = str(e)
+                send_identity_webhook(f"💥 工具異常: {name}", f"啟動失敗: {err_msg}\n執行檔: {exe}\n工作目錄: {wdir}", color=0xFF0033)
+                self.toolLaunchFailedSignal.emit(name, err_msg)
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -1746,13 +1797,15 @@ class AIToolLauncherV2(MSFluentWindow):
         self.tools_with_updates[tool_name.lower()] = info
         self.set_all_cards_state(tool_name, ToolCardWidget.STATE_UPDATE_AVAILABLE)
 
-    def on_tool_launched_success(self, name: str, pid: int, proc: object, tool_data: dict = None):
+    def on_tool_launched_success(self, name: str, pid: int, proc: object, tool_data: dict = None, log_path: str = ""):
         key = get_tool_card_unique_key(tool_data) if tool_data else name
         record = {
             "proc": proc,
             "pid": pid,
             "tool_data": tool_data,
-            "name": name
+            "name": name,
+            "log_path": log_path,
+            "handled": False
         }
         self.running_processes[key] = record
         if name != key:
@@ -1763,8 +1816,78 @@ class AIToolLauncherV2(MSFluentWindow):
         else:
             self.set_all_cards_state(name, ToolCardWidget.STATE_RUNNING)
 
-    def on_tool_launched_failed(self, name: str):
+    def on_tool_launched_failed(self, name: str, err_msg: str = ""):
         self.set_all_cards_state(name, ToolCardWidget.STATE_ERROR)
+        InfoBar.error(
+            title=f"❌ 【{name}】進程啟動失敗",
+            content=f"系統無法執行該小工具：{err_msg}",
+            orient=Qt.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=5000,
+            parent=self
+        )
+
+    def on_tool_crashed_slot(self, tool_data: dict, exit_code: int, log_path: str):
+        """
+        槽函數：處理背景線程回報的進程異常崩潰
+        """
+        self.handle_tool_crash(tool_data, exit_code, log_path)
+
+    def handle_tool_crash(self, tool_data: dict, exit_code: int, log_path: str):
+        """
+        全域小工具崩潰處理器：
+        1. 標記卡片為 STATE_ERROR (紅框警告)
+        2. 安全讀取日誌末尾 35 行
+        3. 彈出頂部 InfoBar.error 顯示錯誤原因與日誌檔案
+        4. 透過加密 Webhook 向 Discord 推播崩潰報告 (含代碼塊與環境資訊)
+        """
+        if not tool_data:
+            return
+        name = tool_data.get("name", "小工具")
+        exe = tool_data.get("executable", "")
+        wdir = tool_data.get("working_dir", "")
+        key = get_tool_card_unique_key(tool_data)
+
+        # 標記已處理並移出運行進程表，防止重複彈窗或輪詢覆蓋
+        info = self.running_processes.pop(key, None) or self.running_processes.pop(name, None)
+        if info:
+            info["handled"] = True
+
+        # 1. 讀取崩潰日誌
+        tail_log = read_log_tail(log_path, max_lines=35)
+
+        # 2. 標註卡片為錯誤狀態 (紅框)
+        self.set_all_cards_state_with_data(tool_data, ToolCardWidget.STATE_ERROR)
+
+        # 3. 提取具體報錯並在頂部提示
+        short_err = ""
+        if tail_log:
+            last_lines = [ln.strip() for ln in tail_log.splitlines() if ln.strip()]
+            if last_lines:
+                short_err = f"\n報錯原因: {last_lines[-1]}"
+
+        InfoBar.error(
+            title=f"❌ 【{name}】啟動或運行異常 (Exit: {exit_code})",
+            content=f"專案意外終止，已記錄至日誌！{short_err}\n日誌路徑：{log_path}",
+            orient=Qt.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=7000,
+            parent=self
+        )
+
+        # 4. 發送 Discord Webhook
+        err_body = (
+            f"專案名稱: {name}\n"
+            f"退出代碼 (Exit Code): {exit_code}\n"
+            f"執行檔案: {exe}\n"
+            f"工作目錄: {wdir}\n"
+            f"日誌檔案: {log_path}\n\n"
+            f"--- 崩潰日誌輸出 (最後 35 行) ---\n"
+            f"{tail_log if tail_log else '(無日誌輸出或進程無標準輸出串流)'}"
+        )
+        send_identity_webhook(f"💥 小工具異常崩潰: {name} (代碼 {exit_code})", err_body, color=0xFF0033)
 
     def stop_tool_process(self, tool_data: dict):
         """
@@ -1777,6 +1900,7 @@ class AIToolLauncherV2(MSFluentWindow):
 
         info = self.running_processes.pop(key, None) or self.running_processes.pop(name, None)
         if info:
+            info["handled"] = True
             proc = info.get("proc")
             pid = info.get("pid")
             try:
@@ -1805,9 +1929,10 @@ class AIToolLauncherV2(MSFluentWindow):
     def poll_running_processes(self):
         """
         每秒定期檢測運行中的小工具，若程式關閉則同步將卡片復原為未開啟 (IDLE) 或有新版本 (UPDATE_AVAILABLE)
-        精準分離本地專案與雲端專案，使用系統級 PID 存活驗證
+        若發現進程異常崩潰退出 (exit_code != 0)，自動呼叫 handle_tool_crash 發送報錯與 Webhook
         """
         stopped_keys = []
+        crashed_records = []
         handled_records = set()
 
         for key, info in list(self.running_processes.items()):
@@ -1816,39 +1941,53 @@ class AIToolLauncherV2(MSFluentWindow):
                 continue
             handled_records.add(rec_id)
 
+            if info.get("handled"):
+                continue
+
             proc = info.get("proc")
             pid = info.get("pid")
             tool_data = info.get("tool_data") or {}
             name = info.get("name") or str(key)
+            log_path = info.get("log_path", "")
             key_in_dict = get_tool_card_unique_key(tool_data) if tool_data else name
 
             is_alive = True
+            exit_code = 0
             if proc and proc.poll() is not None:
                 is_alive = False
+                exit_code = proc.poll()
             elif pid and not is_pid_alive(pid):
                 is_alive = False
+                if proc and proc.poll() is not None:
+                    exit_code = proc.poll()
 
             if not is_alive:
+                info["handled"] = True
                 stopped_keys.append(key)
                 stopped_keys.append(name)
                 stopped_keys.append(key_in_dict)
 
-                is_local = is_local_tool_data(tool_data)
-                # 本地專案絕無更新，直接復原為 IDLE；雲端專案若有新版本則復原為 UPDATE_AVAILABLE
-                u_info = self.get_tool_update_info(name, tool_data.get("repo_name")) if not is_local else None
-                if u_info:
-                    if tool_data:
-                        self.set_all_cards_state_with_data(tool_data, ToolCardWidget.STATE_UPDATE_AVAILABLE)
-                    else:
-                        self.set_all_cards_state(name, ToolCardWidget.STATE_UPDATE_AVAILABLE)
+                if exit_code != 0:
+                    crashed_records.append((tool_data, exit_code, log_path))
                 else:
-                    if tool_data:
-                        self.set_all_cards_state_with_data(tool_data, ToolCardWidget.STATE_IDLE)
+                    is_local = is_local_tool_data(tool_data)
+                    u_info = self.get_tool_update_info(name, tool_data.get("repo_name")) if not is_local else None
+                    if u_info:
+                        if tool_data:
+                            self.set_all_cards_state_with_data(tool_data, ToolCardWidget.STATE_UPDATE_AVAILABLE)
+                        else:
+                            self.set_all_cards_state(name, ToolCardWidget.STATE_UPDATE_AVAILABLE)
                     else:
-                        self.set_all_cards_state(name, ToolCardWidget.STATE_IDLE)
+                        if tool_data:
+                            self.set_all_cards_state_with_data(tool_data, ToolCardWidget.STATE_IDLE)
+                        else:
+                            self.set_all_cards_state(name, ToolCardWidget.STATE_IDLE)
 
         for k in stopped_keys:
             self.running_processes.pop(k, None)
+
+        for t_data, e_code, l_path in crashed_records:
+            self.handle_tool_crash(t_data, e_code, l_path)
 
     def toggle_favorite(self, tool_data: dict):
         """
