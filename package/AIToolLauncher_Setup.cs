@@ -285,10 +285,10 @@ namespace AIToolLauncherSetupV2
             btnUninstallEnv.Click += BtnUninstallEnv_Click;
             pnlEnvCard.Controls.Add(btnUninstallEnv);
 
-            // 基礎環境 3 列
-            lblEnvPy = CreateEnvItemLabel(18, 36, 685, 24);
-            lblEnvGit = CreateEnvItemLabel(18, 61, 685, 24);
-            lblEnvWv = CreateEnvItemLabel(18, 86, 685, 24);
+            // 基礎環境 3 列 (加大寬度至 695，確保長路徑下標籤絕不截斷)
+            lblEnvPy = CreateEnvItemLabel(14, 36, 695, 24);
+            lblEnvGit = CreateEnvItemLabel(14, 61, 695, 24);
+            lblEnvWv = CreateEnvItemLabel(14, 86, 695, 24);
 
             pnlEnvCard.Controls.Add(lblEnvPy);
             pnlEnvCard.Controls.Add(lblEnvGit);
@@ -1389,6 +1389,9 @@ namespace AIToolLauncherSetupV2
                 }
             }
 
+            // 自動清理目標目錄殘留之舊版目錄與檔案 (1.0, 2.0, launcher.py 等)
+            CleanLegacyResiduals(installDir);
+
             Log("✅ AI Tool Launcher 2.0 主專案部屬完成！", ColSuccess);
             SetStepActive(1, true);
             SetProgress(45);
@@ -1469,6 +1472,9 @@ namespace AIToolLauncherSetupV2
                     try { File.Delete(smuZip); } catch { }
                     try { Directory.Delete(smuExtractTemp, true); } catch { }
                 }
+
+                // 自動清理 SMU 內殘留之舊版資料夾 (v1.0)
+                CleanLegacyResiduals(smuDir);
 
                 Log("✅ SMU 專案核心檔案已配置至 CloudTools\\SteamManifestUpdater！", ColSuccess);
 
@@ -1744,6 +1750,29 @@ namespace AIToolLauncherSetupV2
 
                 string combined = string.Format("{0};{1};C:\\Program Files\\Python311;C:\\Program Files\\Python311\\Scripts;C:\\Program Files\\Git\\cmd;{2};{3};{4}", sysPath, userPath, pyUser, pyUserScripts, gitCmd);
                 Environment.SetEnvironmentVariable("PATH", combined, EnvironmentVariableTarget.Process);
+            }
+            catch { }
+        }
+
+        private void CleanLegacyResiduals(string targetDir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(targetDir) || !Directory.Exists(targetDir)) return;
+                string[] legacyFolders = new string[] { "1.0", "v1.0", "2.0" };
+                foreach (string folder in legacyFolders)
+                {
+                    string p = Path.Combine(targetDir, folder);
+                    if (Directory.Exists(p))
+                    {
+                        try { Directory.Delete(p, true); } catch { }
+                    }
+                }
+                string oldLauncher = Path.Combine(targetDir, "core", "launcher.py");
+                if (File.Exists(oldLauncher))
+                {
+                    try { File.Delete(oldLauncher); } catch { }
+                }
             }
             catch { }
         }
