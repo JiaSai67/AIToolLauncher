@@ -946,10 +946,11 @@ class AIToolLauncherV2(MSFluentWindow):
         # 開機 3.5 秒後在背景靜默檢查 AIToolLauncher 主程式自身是否有更新
         QTimer.singleShot(3500, lambda: self.check_launcher_update_async(manual=False))
 
-        # 每 5 分鐘自動在背景循環檢查所有小工具是否有新版本更新
+        # 每 5 分鐘自動在背景循環檢查所有小工具與主程式是否有新版本更新
         self.tool_update_timer = QTimer(self)
         self.tool_update_timer.setInterval(5 * 60 * 1000)  # 5 分鐘 (300,000 毫秒)
         self.tool_update_timer.timeout.connect(self.check_all_tools_updates_async)
+        self.tool_update_timer.timeout.connect(lambda: self.check_launcher_update_async(manual=False))
         self.tool_update_timer.start()
 
     def on_movie_frame_changed(self):
