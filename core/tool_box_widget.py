@@ -485,20 +485,17 @@ class ToolCardWidget(QWidget):
     def get_tool_raw_pixmap(self) -> QPixmap:
         default_icon = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.png")
         repo_name = self.data.get("repo_name") or self.data.get("name", "")
-
-        # 1. 優先檢查本地快取的專案專屬圖示 (resources/cache/icons/{repo_name}.png)
-        cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "cache", "icons")
-        for cand in [repo_name, repo_name.replace(" ", ""), self.data.get("name", "")]:
-            if cand:
-                cached_file = os.path.join(cache_dir, f"{cand}.png")
-                if os.path.exists(cached_file) and os.path.getsize(cached_file) > 0:
-                    return QPixmap(cached_file)
-
-        # 2. 檢查工作目錄內的圖示
         working_dir = self.data.get("working_dir", "")
+        cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "cache", "icons")
+
+        # 1. 優先檢查本地已安裝專案工作目錄內的最新圖示 (最高優先級，確保 2.0 櫻花等新圖示永遠生效)
         if working_dir and os.path.exists(working_dir):
             candidate_paths = [
+                os.path.join(working_dir, "assets", "sakura.png"),
+                os.path.join(working_dir, "assets", "sakura.ico"),
+                os.path.join(working_dir, "src", "gui", "assets", "sakura.png"),
                 os.path.join(working_dir, "assets", "icon.png"),
+                os.path.join(working_dir, "src", "gui", "assets", "icon.png"),
                 os.path.join(working_dir, "icon", "mic.png"),
                 os.path.join(working_dir, "resources", "icon.png"),
                 os.path.join(working_dir, "assets", "icon.ico"),
@@ -506,8 +503,24 @@ class ToolCardWidget(QWidget):
                 os.path.join(working_dir, "app.ico")
             ]
             for p in candidate_paths:
-                if os.path.exists(p):
+                if os.path.exists(p) and os.path.getsize(p) > 0:
+                    # 同步刷新快取檔案，淘汰舊快取
+                    if repo_name:
+                        try:
+                            os.makedirs(cache_dir, exist_ok=True)
+                            cached_file = os.path.join(cache_dir, f"{repo_name}.png")
+                            if not os.path.exists(cached_file) or os.path.getmtime(p) > os.path.getmtime(cached_file):
+                                shutil.copy2(p, cached_file)
+                        except Exception:
+                            pass
                     return QPixmap(p)
+
+        # 2. 未安裝專案：檢查本地已快取的 GitHub 雲端圖示 (resources/cache/icons/{repo_name}.png)
+        for cand in [repo_name, repo_name.replace(" ", ""), self.data.get("name", "")]:
+            if cand:
+                cached_file = os.path.join(cache_dir, f"{cand}.png")
+                if os.path.exists(cached_file) and os.path.getsize(cached_file) > 0:
+                    return QPixmap(cached_file)
 
         return QPixmap(default_icon)
 

@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.24"
+VERSION = "2.0.25"
 
 
 def parse_version_tuple(v_str: str) -> tuple:

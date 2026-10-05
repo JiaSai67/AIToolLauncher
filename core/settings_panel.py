@@ -1,12 +1,13 @@
-import json, os, shutil
+import json, os, shutil, sys, platform, subprocess
+from datetime import datetime
 from PySide6.QtCore import Qt, Signal, QEasingCurve
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QButtonGroup, QFileDialog
+    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QButtonGroup, QFileDialog, QApplication
 )
 from qfluentwidgets import (
     SubtitleLabel, BodyLabel, CaptionLabel, StrongBodyLabel,
     Slider, RadioButton, CardWidget, PushButton, TransparentToolButton,
-    FluentIcon, setTheme, Theme, SmoothScrollArea
+    FluentIcon, setTheme, Theme, SmoothScrollArea, InfoBar, InfoBarPosition
 )
 
 
@@ -14,7 +15,7 @@ class SettingsPanel(QWidget):
     settingsChanged = Signal(dict)
     checkUpdateRequested = Signal()
 
-    def __init__(self, settings_file: str, version: str = "2.0.22", parent=None):
+    def __init__(self, settings_file: str, version: str = "2.0.25", parent=None):
         super().__init__(parent)
         self.setObjectName("settingsInterface")
         self.version = version
@@ -134,6 +135,10 @@ class SettingsPanel(QWidget):
         self.update_card = self.create_update_card()
         c_layout.addWidget(self.update_card)
 
+        # 8. 📋 系統診斷與運行日誌 Card
+        self.diagnostics_card = self.create_diagnostics_card()
+        c_layout.addWidget(self.diagnostics_card)
+
         c_layout.addStretch(1)
         scroll.setWidget(container)
         main_layout.addWidget(scroll)
@@ -161,6 +166,118 @@ class SettingsPanel(QWidget):
         layout.addWidget(self.btn_check_update)
 
         return card
+
+    def create_diagnostics_card(self) -> CardWidget:
+        card = CardWidget(self)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(10)
+
+        t_label = StrongBodyLabel("📋 系統診斷與運行日誌 (Diagnostics & Logs)", card)
+        d_label = CaptionLabel("遇到異常、小工具啟動失敗或需回報運行狀況時，可直接查看日誌或一鍵複製環境資訊回報給開發者", card)
+        layout.addWidget(t_label)
+        layout.addWidget(d_label)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        self.btn_view_log = PushButton("查看運行日誌", card)
+        self.btn_view_log.setIcon(FluentIcon.DOCUMENT)
+        self.btn_view_log.setCursor(Qt.PointingHandCursor)
+        self.btn_view_log.clicked.connect(self.on_view_runtime_log)
+
+        self.btn_open_log_dir = PushButton("開啟日誌目錄", card)
+        self.btn_open_log_dir.setIcon(FluentIcon.FOLDER)
+        self.btn_open_log_dir.setCursor(Qt.PointingHandCursor)
+        self.btn_open_log_dir.clicked.connect(self.on_open_log_directory)
+
+        self.btn_copy_diag = PushButton("一鍵複製診斷資訊", card)
+        self.btn_copy_diag.setIcon(FluentIcon.COPY)
+        self.btn_copy_diag.setCursor(Qt.PointingHandCursor)
+        self.btn_copy_diag.clicked.connect(self.on_copy_diagnostic_info)
+
+        btn_row.addWidget(self.btn_view_log)
+        btn_row.addWidget(self.btn_open_log_dir)
+        btn_row.addWidget(self.btn_copy_diag)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+
+        return card
+
+    def on_view_runtime_log(self):
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        log_candidates = [
+            os.path.join(root_dir, "launcher_error.log"),
+            os.path.join(root_dir, "resources", "logs", "launcher_runtime.log"),
+            os.path.join(root_dir, "launcher_runtime.log")
+        ]
+        target_log = None
+        for p in log_candidates:
+            if os.path.exists(p) and os.path.getsize(p) > 0:
+                target_log = p
+                break
+
+        if not target_log:
+            # 建立一份包含基礎環境與運行的即時診斷報告
+            target_log = os.path.join(root_dir, "launcher_runtime.log")
+            diag_text = self._build_diagnostic_text()
+            try:
+                with open(target_log, "w", encoding="utf-8") as f:
+                    f.write(f"=== AI Tool Launcher 即時運行診斷報告 ===\n產生時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n{diag_text}\n\n[狀態說明]: 目前系統無重大攔截崩潰日誌，主程式運作良好。\n")
+            except Exception:
+                pass
+
+        try:
+            if sys.platform == "win32":
+                os.startfile(target_log)
+            else:
+                subprocess.Popen(["xdg-open", target_log])
+        except Exception as e:
+            InfoBar.warning("開啟失敗", f"無法開啟日誌檔案: {e}", parent=self)
+
+    def on_open_log_directory(self):
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        try:
+            if sys.platform == "win32":
+                os.startfile(root_dir)
+            else:
+                subprocess.Popen(["xdg-open", root_dir])
+        except Exception as e:
+            InfoBar.warning("開啟目錄失敗", str(e), parent=self)
+
+    def _build_diagnostic_text(self) -> str:
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        lines = [
+            f"• Launcher 版本: v{self.version}",
+            f"• Python 核心: {platform.python_version()} ({sys.executable})",
+            f"• 作業系統: {platform.system()} {platform.release()} ({platform.architecture()[0]})",
+            f"• 工作目錄: {root_dir}",
+            f"• 螢幕時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        ]
+        # 附加 Git 狀態
+        try:
+            git_ver = subprocess.check_output(["git", "--version"], stderr=subprocess.STDOUT, timeout=3).decode("utf-8", "ignore").strip()
+            lines.append(f"• Git 版本: {git_ver}")
+        except Exception:
+            lines.append("• Git 版本: 未檢測到或執行超時")
+
+        return "\n".join(lines)
+
+    def on_copy_diagnostic_info(self):
+        diag_text = self._build_diagnostic_text()
+        try:
+            QApplication.clipboard().setText(diag_text)
+            InfoBar.success(
+                title="複製成功",
+                content="系統診斷資訊已複製至剪貼簿！可直接貼給開發者以供排查。",
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3500,
+                parent=self
+            )
+        except Exception as e:
+            InfoBar.warning("複製失敗", str(e), parent=self)
 
     def create_background_image_card(self) -> CardWidget:
         card = CardWidget(self)

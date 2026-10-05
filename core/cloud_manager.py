@@ -224,8 +224,10 @@ def get_cloud_icon_async(repo_name: str, cache_dir: str, on_icon_ready):
         return
 
     candidate_raw_urls = [
-        f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/icon/mic.png",
+        f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/assets/sakura.png",
+        f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/src/gui/assets/sakura.png",
         f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/assets/icon.png",
+        f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/icon/mic.png",
         f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/assets/icon.ico",
         f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/resources/icon.png",
         f"https://raw.githubusercontent.com/JiaSai67/{repo_name}/main/icon.png"
