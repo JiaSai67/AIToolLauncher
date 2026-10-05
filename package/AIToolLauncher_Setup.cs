@@ -205,7 +205,7 @@ namespace AIToolLauncherSetupV2
             this.Controls.Add(pnlOptionsCard);
 
             chkInstallSMU = CreateCheckbox("🎮 預先下載並安裝 SteamManifestUpdater (SMU 2.0) 專案與運行依賴", new Point(18, 12), true);
-            chkShortcut = CreateCheckbox("🖥️ 於桌面建立專屬啟動捷徑 (AI Tool Launcher 2.0)", new Point(18, 38), true);
+            chkShortcut = CreateCheckbox("🖥️ 於桌面建立專屬啟動捷徑 (AI Tool Launcher 與 SMU 櫻花雙捷徑)", new Point(18, 38), true);
 
             pnlOptionsCard.Controls.Add(chkInstallSMU);
             pnlOptionsCard.Controls.Add(chkShortcut);
@@ -696,6 +696,9 @@ namespace AIToolLauncherSetupV2
                     Log("✅ SMU 專屬相依套件安裝完畢！", ColSuccess);
                 }
 
+                // 確保 SMU 專屬 SteamManifestUpdater.exe 存在 (若無則現場調用系統 csc 編譯)
+                EnsureSmuExecutableCompiled(smuDir);
+
                 // 自動更新或校正 registry.json
                 UpdateRegistryWithSMU(installDir, smuDir);
             }
@@ -708,7 +711,7 @@ namespace AIToolLauncherSetupV2
             SetStepActive(4);
             if (chkShortcut.Checked)
             {
-                CreateDesktopShortcut(installDir);
+                CreateDesktopShortcuts(installDir);
             }
 
             SetProgress(100);
@@ -732,21 +735,93 @@ namespace AIToolLauncherSetupV2
         }
 
         // ==========================================
-        // 捷徑與啟動
+        // 捷徑與啟動 (同時建立 Launcher 與 SMU 雙桌面捷徑)
         // ==========================================
-        private void CreateDesktopShortcut(string installDir)
+        private void EnsureSmuExecutableCompiled(string smuDir)
+        {
+            try
+            {
+                string smuExe = Path.Combine(smuDir, "SteamManifestUpdater.exe");
+                string wrapperCs = Path.Combine(smuDir, "Wrapper.cs");
+                string sakuraIco = Path.Combine(smuDir, "assets", "sakura.ico");
+                if (!File.Exists(sakuraIco)) sakuraIco = Path.Combine(smuDir, "icon.ico");
+
+                if (!File.Exists(smuExe) && File.Exists(wrapperCs))
+                {
+                    Log("⏳ 正在現場編譯 SMU 專屬櫻花啟動器 (SteamManifestUpdater.exe)...", ColAccentCyan);
+                    string csc = @"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe";
+                    if (!File.Exists(csc)) csc = @"C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe";
+
+                    if (File.Exists(csc))
+                    {
+                        string cscArgs = string.Format("/target:winexe /optimize+ /platform:x64 /win32icon:\"{0}\" /out:\"{1}\" /r:System.dll,System.Core.dll,System.Drawing.dll,System.Windows.Forms.dll \"{2}\"", sakuraIco, smuExe, wrapperCs);
+                        ProcessStartInfo cscPsi = new ProcessStartInfo(csc, cscArgs);
+                        cscPsi.WorkingDirectory = smuDir;
+                        cscPsi.UseShellExecute = false;
+                        cscPsi.CreateNoWindow = true;
+                        Process cscProc = Process.Start(cscPsi);
+                        cscProc.WaitForExit(6000);
+
+                        if (File.Exists(smuExe))
+                        {
+                            Log("🌸 專屬櫻花 SteamManifestUpdater.exe 已現場編譯完成！", ColSuccess);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("⚠️ 現場編譯 SMU 啟動器警告: " + ex.Message, ColWarning);
+            }
+        }
+
+        private void CreateDesktopShortcuts(string installDir)
         {
             try
             {
                 string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                string shortcutPath = Path.Combine(desktop, "AI Tool Launcher 2.0.lnk");
-                string launcherExe = Path.Combine(installDir, "AIToolLauncher.exe");
-                string targetPath = File.Exists(launcherExe) ? launcherExe : Path.Combine(installDir, "啟動_AIToolLauncher.bat");
-                string iconPath = Path.Combine(installDir, "resources", "icon.ico");
 
+                // 1. 建立 AI Tool Launcher 2.0 桌面捷徑
+                string launcherExe = Path.Combine(installDir, "AIToolLauncher.exe");
+                string targetLauncher = File.Exists(launcherExe) ? launcherExe : Path.Combine(installDir, "啟動_AIToolLauncher.bat");
+                string launcherIcon = Path.Combine(installDir, "resources", "icon.ico");
+                string launcherLnk = Path.Combine(desktop, "AI Tool Launcher 2.0.lnk");
+
+                CreateSingleShortcut(launcherLnk, targetLauncher, installDir, launcherIcon);
+                Log("✨ 已為您建立桌面捷徑：AI Tool Launcher 2.0", ColSuccess);
+
+                // 2. 若有勾選 SMU，同步建立 Steam Manifest 2.0 專屬櫻花桌面捷徑
+                if (chkInstallSMU.Checked)
+                {
+                    string smuDir = Path.Combine(installDir, "CloudTools", "SteamManifestUpdater");
+                    if (Directory.Exists(smuDir))
+                    {
+                        string smuExe = Path.Combine(smuDir, "SteamManifestUpdater.exe");
+                        string smuBat = Path.Combine(smuDir, "啟動_SteamManifestUpdater.bat");
+                        string targetSmu = File.Exists(smuExe) ? smuExe : (File.Exists(smuBat) ? smuBat : smuExe);
+
+                        string smuIcon = Path.Combine(smuDir, "assets", "sakura.ico");
+                        if (!File.Exists(smuIcon)) smuIcon = Path.Combine(smuDir, "icon.ico");
+
+                        string smuLnk = Path.Combine(desktop, "Steam Manifest 更新工具 2.0.lnk");
+                        CreateSingleShortcut(smuLnk, targetSmu, smuDir, smuIcon);
+                        Log("🌸 已為您建立桌面捷徑：Steam Manifest 更新工具 2.0 (專屬櫻花圖示)", ColSuccess);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("⚠️ 建立桌面捷徑時發生微小異常: " + ex.Message, ColWarning);
+            }
+        }
+
+        private void CreateSingleShortcut(string lnkPath, string targetPath, string workDir, string iconPath)
+        {
+            try
+            {
                 string psScript = string.Format(
                     "$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('{0}'); $Shortcut.TargetPath = '{1}'; $Shortcut.WorkingDirectory = '{2}'; if (Test-Path '{3}') {{ $Shortcut.IconLocation = '{3}' }}; $Shortcut.Save()",
-                    shortcutPath, targetPath, installDir, iconPath
+                    lnkPath, targetPath, workDir, iconPath
                 );
 
                 ProcessStartInfo psPsi = new ProcessStartInfo("powershell", "-NoProfile -ExecutionPolicy Bypass -Command \"" + psScript.Replace("\"", "\\\"") + "\"");
@@ -754,13 +829,8 @@ namespace AIToolLauncherSetupV2
                 psPsi.UseShellExecute = false;
                 Process ps = Process.Start(psPsi);
                 ps.WaitForExit(3000);
-
-                Log("✨ 已為您建立桌面捷徑：AI Tool Launcher 2.0", ColSuccess);
             }
-            catch (Exception ex)
-            {
-                Log("⚠️ 建立桌面捷徑時發生微小異常: " + ex.Message, ColWarning);
-            }
+            catch { }
         }
 
         private void LaunchToolLauncher()
