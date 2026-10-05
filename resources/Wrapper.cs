@@ -32,7 +32,10 @@ namespace LauncherWrapper {
 
             string pyScript = Path.Combine(Application.StartupPath, "core", "launcher_v2.py");
             if (!File.Exists(pyScript)) {
-                MessageBox.Show("找不到核心檔案: core\\launcher_v2.py", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                pyScript = Path.Combine(Application.StartupPath, "main.py");
+            }
+            if (!File.Exists(pyScript)) {
+                MessageBox.Show("找不到核心啟動檔案: core\\launcher_v2.py", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 

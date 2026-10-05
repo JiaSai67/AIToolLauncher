@@ -419,9 +419,10 @@ class ToolCardWidget(QWidget):
 
         self.update_icon()
 
-    def set_update_available(self, available: bool, local_ver: str = "", remote_ver: str = ""):
+    def set_update_available(self, available: bool, local_ver: str = "", remote_ver: str = "", force_apply: bool = False):
         """
         設定此卡片是否有新版本更新可用
+        force_apply: 若為 True 則強制套用有新版本狀態，徹底防止小工具結束時因卡在 STATE_RUNNING 導致狀態凍結卡死
         """
         self.has_update = available
         self.update_info = {
@@ -429,7 +430,7 @@ class ToolCardWidget(QWidget):
             "remote_ver": remote_ver
         }
         if available:
-            if self.current_state not in (self.STATE_RUNNING, self.STATE_INSTALLING):
+            if force_apply or self.current_state not in (self.STATE_RUNNING, self.STATE_INSTALLING):
                 self.apply_state(self.STATE_UPDATE_AVAILABLE)
         else:
             if self.current_state == self.STATE_UPDATE_AVAILABLE:

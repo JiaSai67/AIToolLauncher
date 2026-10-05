@@ -4,4 +4,5 @@ PySide6-Fluent-Widgets>=1.5.0
 PySideSix-Frameless-Window>=0.3.0
 pywin32
 requests
+pywebview>=4.0.0
 
