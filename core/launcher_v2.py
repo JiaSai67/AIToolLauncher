@@ -2461,41 +2461,52 @@ class AIToolLauncherV2(MSFluentWindow):
 
     def check_launcher_update_async(self, manual: bool = False):
         """
-        在背景異步檢測 AIToolLauncher 主程式是否有新版本 (GitHub origin/main)
+        在背景異步檢測 AIToolLauncher 主程式是否有新版本 (優先 Git，備援 GitHub Raw)
         嚴格比對語意化版本號 (vX.X.XX)，只有遠端版本號嚴格大於本機版本號時才提示更新！
         """
         base_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if not os.path.exists(os.path.join(base_root, ".git")):
-            if manual:
-                InfoBar.warning(
-                    title="非 Git 倉庫",
-                    content="本機專案未檢測到 .git 目錄，若需更新請至 GitHub 下載最新版本覆蓋。",
-                    orient=Qt.Horizontal,
-                    isClosable=True,
-                    position=InfoBarPosition.TOP,
-                    duration=4000,
-                    parent=self
-                )
-            return
+        has_git_repo = os.path.exists(os.path.join(base_root, ".git"))
 
         def _task():
             try:
                 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                # 靜默抓取遠端最新 main 分支狀態
-                subprocess.run(
-                    ["git", "fetch", "origin", "main", "--quiet"],
-                    cwd=base_root, creationflags=flags, timeout=15,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
+                remote_ver_str = None
+
+                # 1. 優先使用 Git 檢查
+                if has_git_repo:
+                    try:
+                        subprocess.run(
+                            ["git", "fetch", "origin", "main", "--quiet"],
+                            cwd=base_root, creationflags=flags, timeout=15,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                        )
+                        remote_ver_str = resolve_semantic_version(base_root, "origin/main")
+                        if not remote_ver_str or remote_ver_str == "v1.0.0":
+                            remote_ver_str = resolve_semantic_version(base_root, "FETCH_HEAD")
+                    except Exception:
+                        pass
+
+                # 2. 雲端 HTTP 備援檢查：若非 Git 倉庫或 Git 失敗，改由 GitHub Raw 快速比對
+                if not remote_ver_str or remote_ver_str == "v1.0.0":
+                    try:
+                        import urllib.request
+                        raw_url = "https://raw.githubusercontent.com/JiaSai67/AIToolLauncher/main/core/launcher_v2.py"
+                        req = urllib.request.Request(raw_url, headers={"User-Agent": "AIToolLauncher-2.0"})
+                        with urllib.request.urlopen(req, timeout=6) as resp:
+                            code_txt = resp.read().decode('utf-8', errors='ignore')
+                            m = re.search(r'VERSION\s*=\s*["\']([^"\']+)["\']', code_txt)
+                            if m:
+                                remote_ver_str = f"v{m.group(1).strip()}"
+                    except Exception:
+                        pass
+
+                if not remote_ver_str:
+                    if manual:
+                        self.launcherUpdateStatus.emit("ERROR", "無法連線至 GitHub 獲取最新版本資訊，請檢查網路連線。")
+                    return
 
                 local_ver_str = f"v{VERSION}"
                 local_tuple = parse_version_tuple(VERSION)
-
-                # 解析遠端最新版本號 (優先由 origin/main 解析，若未更新則嘗試 FETCH_HEAD)
-                remote_ver_str = resolve_semantic_version(base_root, "origin/main")
-                if not remote_ver_str or remote_ver_str == "v1.0.0":
-                    remote_ver_str = resolve_semantic_version(base_root, "FETCH_HEAD")
-
                 remote_tuple = parse_version_tuple(remote_ver_str)
 
                 # 核心防護：只有當「遠端版本號」嚴格大於「本機目前版本號」時，才判定為有新版本！

@@ -1,8 +1,47 @@
+# ==========================================
+# AI Tool Launcher 專案瘦身與安全過濾清單
+# ==========================================
+
+# 1. 舊版備份與版本歸檔目錄 (絕不上傳 Git)
+1.0/
+2.0/
+*.bak
+*.backup
+*.old
+
+# 2. 本地雲端工具工作目錄 (各模組由 Setup/Launcher 獨立管理與克隆)
 CloudTools/
-__pycache__/
-*.pyc
-resources/config/
+
+# 3. 本地個人配置、快取、日誌與臨時檔案
+resources/config/*
+!resources/config/registry.json
 resources/cache/
-.scratch/
 *.log
+launcher_error.log
+.scratch/
+scratch/
+install_manifest.json
+
+# 4. Python 編譯產物與虛擬環境
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# 5. 本地二進位產物
+AIToolLauncher.exe
 AIToolLauncher_Setup.exe
+*.obj
+*.pdb
+
+# 6. 作業系統與 IDE 暫存檔
+.vscode/
+.idea/
+*.suo
+*.user
+Thumbs.db
+Desktop.ini

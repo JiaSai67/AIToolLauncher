@@ -3,9 +3,16 @@
         {
             "name": "Steam Manifest - 本地開發版",
             "description": "本地原始碼開發版本 (支援快速熱重載與除錯)",
-            "executable": "G:\\python\\SteamManifestUpdater\\SteamManifestUpdater.exe",
+            "executable": "G:\\python\\SteamManifestUpdater\\src\\main.py",
             "working_dir": "G:\\python\\SteamManifestUpdater",
             "is_local": true
+        },
+        {
+            "name": "Auto-PCFish",
+            "repo_name": "Auto-PCFish",
+            "description": "雲端工具",
+            "executable": "G:\\python\\toolLauncher\\CloudTools\\Auto-PCFish\\main.py",
+            "working_dir": "G:\\python\\toolLauncher\\CloudTools\\Auto-PCFish"
         },
         {
             "name": "按鍵發話控制器 (PTTApp)",
@@ -15,46 +22,18 @@
             "working_dir": "G:\\python\\toolLauncher\\CloudTools\\PTTApp"
         },
         {
+            "description": "全新 2.0 櫻花流光極速版：多源 Manifest (Ryuu + Lua.tools) 自動比對、SteamDB 歷史版本追蹤、純 AppID 驅動與全自動入庫",
+            "executable": "G:\\python\\toolLauncher\\CloudTools\\SteamManifestUpdater\\src\\main.py",
+            "name": "Steam Manifest 更新工具2.0",
+            "repo_name": "SteamManifestUpdater",
+            "working_dir": "G:\\python\\toolLauncher\\CloudTools\\SteamManifestUpdater"
+        },
+        {
             "name": "專屬計畫書 🌸",
             "repo_name": "xingshili",
-            "description": "計畫書",
+            "description": "為寶貝專屬打造的馬卡龍粉色系計畫書，包含打卡流程與各種溫馨任務清單。",
             "executable": "G:\\python\\toolLauncher\\CloudTools\\xingshili\\main.py",
             "working_dir": "G:\\python\\toolLauncher\\CloudTools\\xingshili"
-        },
-        {
-            "description": "PC Fish 智能繁殖管理終端 - 記憶體直讀繁殖、同階與差一階智能配種、無感差量更新與本地計時休眠工具",
-            "executable": "G:\\python\\toolLauncher\\CloudTools\\Auto-PCFish\\main.py",
-            "name": "Auto-PCFish",
-            "working_dir": "G:\\python\\toolLauncher\\CloudTools\\Auto-PCFish"
-        },
-        {
-            "description": "PC Fish 全自動記憶體直讀繁殖、官方最高期望值階梯配種、賽季魚合成雷達與一般魚純記憶體融合工具",
-            "executable": "G:\\python\\cheatengine\\Auto-PCFish\\main.py",
-            "name": "PC Fish 智能繁殖管理終端",
-            "repo_name": "Auto-PCFish",
-            "working_dir": "G:\\python\\cheatengine\\Auto-PCFish",
-            "is_local": true
-        },
-        {
-            "name": "WoG 記憶體與倍速測試終端",
-            "repo_name": "WoG",
-            "description": "War of Genesis: Idle Loot (Genesis.exe) 專用記憶體探測、TimeScale 倍速測試與 Cheat Engine Table 輔助工具",
-            "executable": "G:\\python\\cheatengine\\WoG\\main.py",
-            "working_dir": "G:\\python\\cheatengine\\WoG",
-            "is_local": true
-        },
-        {
-            "name": "AItrader 訂單流高頻狙擊終端",
-            "description": "Fabio Valentini 拍賣市場理論 (AMT) 與 Orderflow 高頻足跡圖 / 6-Step AI 決策終端",
-            "executable": "G:\\python\\AItrader\\main.py",
-            "working_dir": "G:\\python\\AItrader",
-            "is_local": true
-        },
-        {
-            "description": "全新 2.0 櫻花流光極速版：多源 Manifest (Ryuu + Lua.tools) 自動比對、SteamDB 歷史版本追蹤、純 AppID 驅動與全自動入庫",
-            "executable": "G:\\python\\toolLauncher\\CloudTools\\SteamManifestUpdater\\SteamManifestUpdater.exe",
-            "name": "Steam Manifest 更新工具2.0",
-            "working_dir": "G:\\python\\toolLauncher\\CloudTools\\SteamManifestUpdater"
         }
     ],
     "favorites": [
