@@ -22,9 +22,9 @@
             "working_dir": "G:\\python\\toolLauncher\\CloudTools\\PTTApp"
         },
         {
-            "description": "全新 2.0 櫻花流光極速版：多源 Manifest (Ryuu + Lua.tools) 自動比對、SteamDB 歷史版本追蹤、純 AppID 驅動與全自動入庫",
+            "description": "全新 2.0.1 櫻花流光極速版：多源 Manifest (Ryuu + Lua.tools) 自動比對、組隊系統全自動一鍵安裝、純 AppID 驅動與全自動入庫",
             "executable": "G:\\python\\toolLauncher\\CloudTools\\SteamManifestUpdater\\src\\main.py",
-            "name": "Steam Manifest 更新工具2.0",
+            "name": "Steam Manifest 更新工具2.0.1",
             "repo_name": "SteamManifestUpdater",
             "working_dir": "G:\\python\\toolLauncher\\CloudTools\\SteamManifestUpdater"
         },

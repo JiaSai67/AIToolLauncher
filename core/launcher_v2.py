@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.25"
+VERSION = "2.0.26"
 
 
 def parse_version_tuple(v_str: str) -> tuple:
@@ -886,7 +886,7 @@ class AIToolLauncherV2(MSFluentWindow):
     toolLaunchedSignal = Signal(str, int, object, dict, str)  # (name, pid, proc, tool_data, log_path)
     toolLaunchFailedSignal = Signal(str, str)                 # (name, err_msg)
     toolCrashedSignal = Signal(dict, int, str)                # (tool_data, exit_code, log_path)
-    launcherUpdateAvailable = Signal(str, str)               # (short_hash, msg)
+    launcherUpdateAvailable = Signal(str, str, bool)         # (remote_ver, local_ver, manual)
     launcherUpdateStatus = Signal(str, str)                  # (status_type, msg)
     toolUpdateAvailableSignal = Signal(str, str, str)        # (name, local_ver, remote_ver)
 
@@ -1028,6 +1028,7 @@ class AIToolLauncherV2(MSFluentWindow):
         self.settings_panel = SettingsPanel(self.settings_file, version=VERSION, parent=self)
         self.settings = self.settings_panel.settings
         self.settings_panel.settingsChanged.connect(self.apply_live_settings)
+        self.settings_panel.viewChangelogRequested.connect(lambda: self.show_launcher_update_report_dialog())
         self.settings_panel.checkUpdateRequested.connect(lambda: [
             self.check_launcher_update_async(manual=True),
             self.check_all_tools_updates_async()
@@ -2511,7 +2512,7 @@ class AIToolLauncherV2(MSFluentWindow):
 
                 # 核心防護：只有當「遠端版本號」嚴格大於「本機目前版本號」時，才判定為有新版本！
                 if remote_tuple > local_tuple:
-                    self.launcherUpdateAvailable.emit(remote_ver_str, local_ver_str)
+                    self.launcherUpdateAvailable.emit(remote_ver_str, local_ver_str, manual)
                     return
 
                 if manual:
@@ -2522,7 +2523,7 @@ class AIToolLauncherV2(MSFluentWindow):
 
         threading.Thread(target=_task, daemon=True).start()
 
-    def on_launcher_update_available_slot(self, remote_ver: str, local_ver: str):
+    def on_launcher_update_available_slot(self, remote_ver: str, local_ver: str, manual: bool = False):
         # 單例防重疊保護：關閉已存在的提示條，避免多個橫幅疊加
         existing_bar = getattr(self, "_launcher_update_bar", None)
         if existing_bar is not None:
@@ -2535,19 +2536,23 @@ class AIToolLauncherV2(MSFluentWindow):
         bar = InfoBar(
             icon=FluentIcon.SYNC,
             title="✨ 發現 AIToolLauncher 主程式新版本！",
-            content=f"目前版本：{local_ver}  ➔  最新版本：{remote_ver}\n點擊右側按鈕即可一鍵全自動升級並重啟。",
+            content=f"目前版本：{local_ver}  ➔  最新版本：{remote_ver}\n點擊右側按鈕即可檢視完整更新報告並升級。",
             orient=Qt.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP_RIGHT,
             duration=-1,
             parent=self
         )
-        update_btn = PushButton(f"升級至 {remote_ver}", bar)
-        update_btn.setFixedWidth(145)
-        update_btn.clicked.connect(lambda: [bar.close(), self.do_launcher_update()])
-        bar.addWidget(update_btn)
+        report_btn = PushButton(f"查看更新報告 / 升級", bar)
+        report_btn.setFixedWidth(160)
+        report_btn.clicked.connect(lambda: [bar.close(), self.show_launcher_update_report_dialog(remote_ver, local_ver)])
+        bar.addWidget(report_btn)
         bar.show()
         self._launcher_update_bar = bar
+
+        # 若使用者手動在設置點選「檢查更新」，直接彈出更新報告對話框
+        if manual:
+            QTimer.singleShot(100, lambda: self.show_launcher_update_report_dialog(remote_ver, local_ver))
 
     def on_launcher_update_status_slot(self, status_type: str, msg: str):
         if status_type == "ALREADY_LATEST":
@@ -2571,67 +2576,162 @@ class AIToolLauncherV2(MSFluentWindow):
                 parent=self
             )
 
+    def show_launcher_update_report_dialog(self, remote_ver: str = None, local_ver: str = None, changelog_summary: str = ""):
+        """
+        呈現精美的 AIToolLauncher 版本更新報告對話框 (支援檢視最新功能、更新紀錄與一鍵升級)
+        """
+        if not local_ver:
+            local_ver = f"v{VERSION}"
+        if not remote_ver:
+            remote_ver = local_ver
+
+        title = "🚀 AIToolLauncher 核心版本更新報告"
+        report_text = (
+            f"主程式版本檢測報告：\n"
+            f"📌 本機目前版本：{local_ver}\n"
+            f"🚀 遠端最新版本：{remote_ver}\n\n"
+            f"【重要版本更新重點與修復項目】\n"
+            f"🌸 1. SteamManifestUpdater 櫻花圖示修復\n"
+            f"   - 徹底解決舊版黑底藍圈 Steam 圖示殘留問題，優先載入 assets/sakura.png\n"
+            f"   - 本地專案圖示反向優先級與快取即時更新\n\n"
+            f"📋 2. 設置中心 - 系統診斷與運行日誌\n"
+            f"   - 新增日誌即時檢視視窗、日誌目錄一鍵開啟、系統診斷報告一鍵複製\n\n"
+            f"⚡ 3. 專案倉庫架構極限瘦身\n"
+            f"   - 徹底移除 1.0/ 舊代碼與歷史殘留檔案，優化加載效能\n\n"
+            f"🛡️ 4. 全新獨立外部極速更新器架構\n"
+            f"   - 重構自我更新機制，主程式退出釋放 Windows 檔案鎖後獨立執行拉取與重啟\n"
+            f"   - 徹底杜絕背景卡死 180 秒與重啟異常問題\n"
+        )
+        if changelog_summary:
+            report_text += f"\n【額外更新備註】\n{changelog_summary}\n"
+
+        is_new_version = (remote_ver != local_ver)
+        if is_new_version:
+            report_text += "\n請問是否立即啟動極速更新器升級至最新版本？"
+
+        box = MessageBox(title, report_text, self)
+        if is_new_version:
+            box.yesButton.setText("🚀 立即極速升級")
+            box.cancelButton.setText("稍後提醒")
+            if box.exec():
+                self.do_launcher_update()
+        else:
+            box.yesButton.setText("確認")
+            box.cancelButton.hide()
+            box.exec()
+
     def do_launcher_update(self):
         """
-        全自動升級 AIToolLauncher 主程式 (git fetch + reset + pip + restart)
+        全自動極速升級 AIToolLauncher 主程式 (外部獨立無鎖更新器)
+        1. 建立獨立批次檔 aitoollauncher_updater.bat
+        2. 背景非同步喚醒獨立更新進程 (獨立 Console 視窗，清晰提示步驟)
+        3. 主程式顯示提示後，於 600ms 內透過 os._exit(0) 乾淨退出，釋放全部檔案鎖
+        4. 外部更新進程安全完成 git fetch + git reset + git clean + 重啟
         """
         base_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        InfoBar.info(
-            title="⏳ 正在更新 AIToolLauncher...",
-            content="正在全自動拉取最新代碼並配置依賴，完成後將自動為您重啟...",
-            orient=Qt.Horizontal,
-            isClosable=False,
-            position=InfoBarPosition.TOP,
-            duration=15000,
-            parent=self
-        )
+        req_path = os.path.join(base_root, "resources", "requirements.txt")
+        python_exe = get_real_python_exe(prefer_gui=False)
+        pythonw_exe = get_real_python_exe(prefer_gui=True)
+        current_pid = os.getpid()
 
-        def _task():
+        import tempfile
+        bat_path = os.path.join(tempfile.gettempdir(), "aitoollauncher_updater.bat")
+
+        bat_content = f"""@echo off
+chcp 65001 >nul
+title AIToolLauncher 極速更新器
+color 0B
+
+echo ========================================================
+echo   正在更新 AI Tool Launcher 主程式至最新版本...
+echo ========================================================
+
+:: 1. 等待主程式退出並釋放所有檔案鎖定
+timeout /t 1 /nobreak >nul
+taskkill /F /PID {current_pid} >nul 2>&1
+taskkill /F /IM AIToolLauncher.exe >nul 2>&1
+
+cd /d "{base_root}"
+
+:: 2. 極速同步最新代碼
+echo [1/3] 正在拉取主倉庫最新發布內容...
+git fetch origin main --quiet
+if errorlevel 1 (
+    echo [警告] 遠端拉取遇到問題，嘗試直接重設...
+)
+
+echo [2/3] 正在重設工作目錄至最新版本...
+git reset --hard origin/main
+git clean -fd -e runtime -e CloudTools -e .env -e *.log
+
+:: 3. 安靜配置依賴套件 (已有套件 0 秒跳過)
+if exist "{req_path}" (
+    echo [3/3] 正在檢查環境依賴...
+    "{python_exe}" -m pip install -r "{req_path}" --quiet --no-warn-script-location
+)
+
+:: 4. 重啟最新版本主程式
+echo.
+echo ========================================================
+echo   🎉 更新完成！正在為您啟動 AI Tool Launcher...
+echo ========================================================
+if exist "AIToolLauncher.exe" (
+    start "" "AIToolLauncher.exe"
+) else if exist "啟動_AIToolLauncher.bat" (
+    start "" "啟動_AIToolLauncher.bat"
+) else (
+    start "" "{pythonw_exe}" core\\launcher_v2.py
+)
+
+:: 5. 清理更新腳本
+timeout /t 1 /nobreak >nul
+(goto) 2>nul & del "%~f0"
+exit /b 0
+"""
+        try:
+            with open(bat_path, "w", encoding="utf-8") as f:
+                f.write(bat_content)
+
+            InfoBar.info(
+                title="⏳ 正在啟動極速更新器...",
+                content="主程式即將退出以釋放檔案鎖定，將在 2 秒內完成更新並自動為您重啟！",
+                orient=Qt.Horizontal,
+                isClosable=False,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self
+            )
+
             try:
-                flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                # 1. git fetch & reset
-                subprocess.run(["git", "fetch", "origin", "main"], cwd=base_root, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=40)
-                p = subprocess.Popen(["git", "reset", "--hard", "origin/main"], cwd=base_root, creationflags=flags, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
-                p.wait(timeout=30)
-
-                # 2. pip install requirements
-                req_path = os.path.join(base_root, "resources", "requirements.txt")
-                if os.path.exists(req_path):
-                    pip_cmd = sys.executable.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in sys.executable.lower() else sys.executable
-                    subprocess.run([pip_cmd, "-m", "pip", "install", "-r", req_path], cwd=base_root, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180)
-
-                # 3. 呼叫重啟腳本
-                import tempfile
-                bat_path = os.path.join(tempfile.gettempdir(), "restart_aitoollauncher.bat")
-                v2_exe = os.path.join(base_root, "AIToolLauncher.exe")
-                v2_py = os.path.join(base_root, "core", "launcher_v2.py")
-                launcher_cmd = sys.executable.lower().replace("python.exe", "pythonw.exe") if "python.exe" in sys.executable.lower() else sys.executable
-
-                with open(bat_path, "w", encoding="utf-8") as f:
-                    f.write("@echo off\n")
-                    f.write("timeout /t 1 /nobreak >nul\n")
-                    f.write(f"cd /d \"{base_root}\"\n")
-                    if os.path.exists(v2_exe):
-                        f.write("start \"\" \"AIToolLauncher.exe\"\n")
-                    elif os.path.exists(v2_py):
-                        f.write(f"start \"\" \"{launcher_cmd}\" core\\launcher_v2.py\n")
-                    f.write("del \"%~f0\"\n")
-
-                # 📡 僅在更新時發送 Webhook 通知推播
                 send_identity_webhook(
-                    "🎉 AIToolLauncher 主程式更新完成",
-                    f"主程式已成功拉取最新版本並配置依賴，即將自動重啟。\n路徑: {base_root}",
-                    color=0x2ECC71
+                    "🚀 AIToolLauncher 啟動獨立更新器",
+                    f"主程式已觸發外部獨立更新流程。\n目標版本更新中...\n路徑: {base_root}",
+                    color=0x3498DB
                 )
+            except Exception:
+                pass
 
-                subprocess.Popen([bat_path], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000))
-                QApplication.quit()
-                sys.exit(0)
-            except Exception as e:
-                err_msg = traceback.format_exc()
-                send_identity_webhook("💥 主程式自動升級異常", err_msg, color=0xFF0033)
+            subprocess.Popen(
+                ["cmd.exe", "/c", bat_path],
+                creationflags=subprocess.CREATE_NEW_CONSOLE
+            )
 
-        threading.Thread(target=_task, daemon=True).start()
+            QTimer.singleShot(600, lambda: os._exit(0))
+        except Exception as e:
+            err_msg = traceback.format_exc()
+            try:
+                send_identity_webhook("💥 主程式啟動更新器失敗", err_msg, color=0xFF0033)
+            except Exception:
+                pass
+            InfoBar.error(
+                title="❌ 啟動更新器失敗",
+                content=f"錯誤原因: {e}",
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=5000,
+                parent=self
+            )
 
     def add_local_tool_dialog(self):
         """

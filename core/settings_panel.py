@@ -14,8 +14,9 @@ from qfluentwidgets import (
 class SettingsPanel(QWidget):
     settingsChanged = Signal(dict)
     checkUpdateRequested = Signal()
+    viewChangelogRequested = Signal()
 
-    def __init__(self, settings_file: str, version: str = "2.0.25", parent=None):
+    def __init__(self, settings_file: str, version: str = "2.0.26", parent=None):
         super().__init__(parent)
         self.setObjectName("settingsInterface")
         self.version = version
@@ -159,9 +160,15 @@ class SettingsPanel(QWidget):
         layout.addLayout(info_layout)
         layout.addStretch(1)
 
+        self.btn_changelog = PushButton("更新報告", card)
+        self.btn_changelog.setIcon(FluentIcon.DOCUMENT)
+        self.btn_changelog.setFixedWidth(110)
+        self.btn_changelog.clicked.connect(self.viewChangelogRequested.emit)
+        layout.addWidget(self.btn_changelog)
+
         self.btn_check_update = PushButton("檢查更新", card)
         self.btn_check_update.setIcon(FluentIcon.SYNC)
-        self.btn_check_update.setFixedWidth(120)
+        self.btn_check_update.setFixedWidth(110)
         self.btn_check_update.clicked.connect(self.checkUpdateRequested.emit)
         layout.addWidget(self.btn_check_update)
 
