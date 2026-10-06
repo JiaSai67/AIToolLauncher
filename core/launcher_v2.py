@@ -2540,7 +2540,7 @@ class AIToolLauncherV2(MSFluentWindow):
             content=f"目前版本：{local_ver}  ➔  最新版本：{remote_ver}\n點擊右側按鈕即可檢視完整更新報告並升級。",
             orient=Qt.Horizontal,
             isClosable=True,
-            position=InfoBarPosition.TOP_RIGHT,
+            position=InfoBarPosition.TOP,
             duration=-1,
             parent=self
         )
