@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.31"
+VERSION = "2.0.32"
 
 
 def parse_version_tuple(v_str: str) -> tuple:
@@ -551,7 +551,7 @@ class BoxLobbyInterface(QWidget):
 
         # 重新整理按鈕
         self.btn_refresh = TransparentToolButton(FluentIcon.SYNC, self)
-        self.btn_refresh.setToolTip("重新整理列表與雲端庫")
+        self.btn_refresh.setToolTip("重新整理列表、雲端庫並檢查更新")
         self.btn_refresh.clicked.connect(lambda: self.refresh_all(show_prompt=True))
         top_bar.addWidget(self.btn_refresh)
 
@@ -635,6 +635,13 @@ class BoxLobbyInterface(QWidget):
                 self.parent_window.bg_movie.setPaused(False)
 
     def refresh_all(self, show_prompt: bool = False):
+        """
+        全方位重新整理與同步：
+        1. 重新載入註冊表與快取清理
+        2. 同步 GitHub 雲端官方工具清單
+        3. 重新渲染小卡
+        4. 🚀 連動全域更新檢查：檢測所有已安裝小工具與 AIToolLauncher 主程式之新版本
+        """
         self.parent_window.reload_registry()
         try:
             from core.cloud_manager import clear_negative_icon_cache
@@ -643,14 +650,19 @@ class BoxLobbyInterface(QWidget):
             pass
         self.fetch_cloud_repos_async()
         self.load_and_render_tools(filter_text=self.search_input.text().strip())
+
+        # 🚀 連動觸發小工具與主程式版本更新檢測
+        self.parent_window.check_all_tools_updates_async(manual=show_prompt)
+        self.parent_window.check_launcher_update_async(manual=show_prompt)
+
         if show_prompt:
             InfoBar.info(
-                title="🔄 已重新整理",
-                content="小工具列表與雲端狀態已同步！",
+                title="🔄 正在同步與檢查更新",
+                content="小工具列表已同步，正在背景檢測小工具與主程式新版本...",
                 orient=Qt.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP,
-                duration=2000,
+                duration=2500,
                 parent=self
             )
 
@@ -944,6 +956,7 @@ class AIToolLauncherV2(MSFluentWindow):
     launcherUpdateAvailable = Signal(str, str, bool)         # (remote_ver, local_ver, manual)
     launcherUpdateStatus = Signal(str, str)                  # (status_type, msg)
     toolUpdateAvailableSignal = Signal(str, str, str)        # (name, local_ver, remote_ver)
+    toolsUpdateCheckFinished = Signal(int, int, bool)        # (updates_count, total_checked, manual)
 
     def __init__(self):
         super().__init__()
@@ -984,6 +997,7 @@ class AIToolLauncherV2(MSFluentWindow):
         self.launcherUpdateAvailable.connect(self.on_launcher_update_available_slot)
         self.launcherUpdateStatus.connect(self.on_launcher_update_status_slot)
         self.toolUpdateAvailableSignal.connect(self.on_tool_update_available_slot)
+        self.toolsUpdateCheckFinished.connect(self.on_tools_update_check_finished_slot)
 
         # 即時進程狀態監控定時器 (每秒檢測程式是否關閉，自動重置卡片為未開啟)
         self.proc_monitor_timer = QTimer(self)
@@ -2003,6 +2017,34 @@ class AIToolLauncherV2(MSFluentWindow):
         self.tools_with_updates[tool_name.lower()] = info
         self.set_all_cards_state(tool_name, ToolCardWidget.STATE_UPDATE_AVAILABLE, force_apply=False)
 
+    def on_tools_update_check_finished_slot(self, updates_count: int, total_checked: int, manual: bool):
+        """
+        當小工具版本檢測全部完成時，若為手動刷新觸發則彈出反饋通知
+        """
+        if not manual:
+            return
+        if updates_count > 0:
+            InfoBar.warning(
+                title="📦 發現小工具可更新！",
+                content=f"已為您檢測到 {updates_count} 個小工具具備新版本，已標註更新標籤！",
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=4000,
+                parent=self
+            )
+        else:
+            if total_checked > 0:
+                InfoBar.success(
+                    title="🎉 小工具均為最新版",
+                    content=f"已完成 {total_checked} 個小工具比對，所有小工具皆已是最新狀態！",
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=3000,
+                    parent=self
+                )
+
     def on_tool_launched_success(self, name: str, pid: int, proc: object, tool_data: dict = None, log_path: str = ""):
         key = get_tool_card_unique_key(tool_data) if tool_data else name
         record = {
@@ -2404,10 +2446,11 @@ class AIToolLauncherV2(MSFluentWindow):
                 parent=self
             )
 
-    def check_all_tools_updates_async(self):
+    def check_all_tools_updates_async(self, manual: bool = False):
         """
         在背景異步檢測所有已安裝的小工具是否有 Git 遠端新版本
         全面搜集 registry 登記、已載入工具以及 CloudTools 目錄實體倉庫
+        manual: 若為 True 則在檢測完成後發射完成狀態提示
         """
         tools_map = {}
         # 1. 搜集來自 registry 的小工具 (💥 嚴格排除本地專案，絕不檢查更新)
@@ -2447,10 +2490,15 @@ class AIToolLauncherV2(MSFluentWindow):
 
         tools = list(tools_map.values())
         if not tools:
+            if manual:
+                self.toolsUpdateCheckFinished.emit(0, 0, manual)
             return
 
         def _task():
             flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+            updates_count = 0
+            checked_count = 0
+
             for t in tools:
                 if is_local_tool_data(t):
                     continue
@@ -2465,6 +2513,7 @@ class AIToolLauncherV2(MSFluentWindow):
                 if not os.path.exists(git_dir):
                     continue
 
+                checked_count += 1
                 try:
                     # 1. 取得本地當前短 commit hash
                     local_hash = subprocess.check_output(
@@ -2511,6 +2560,7 @@ class AIToolLauncherV2(MSFluentWindow):
                     ).strip()
 
                     if remote_hash and local_hash and remote_hash != local_hash:
+                        updates_count += 1
                         # 智能解析語意化版本號 (vX.X.XX)
                         local_semver = resolve_semantic_version(wdir, "HEAD")
                         remote_semver = resolve_semantic_version(wdir, remote_branch)
@@ -2556,6 +2606,8 @@ class AIToolLauncherV2(MSFluentWindow):
                         )
                 except Exception:
                     continue
+
+            self.toolsUpdateCheckFinished.emit(updates_count, checked_count, manual)
 
         threading.Thread(target=_task, daemon=True).start()
 
