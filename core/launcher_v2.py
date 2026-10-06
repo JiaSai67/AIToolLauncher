@@ -98,48 +98,59 @@ def parse_version_tuple(v_str: str) -> tuple:
     return tuple(int(x) for x in nums) if nums else (0, 0, 0)
 
 
+def clean_version_str(raw: str) -> str:
+    """
+    嚴格清洗版本號字串：
+    提取純淨的語意化格式 (例如 2.0.2 或 2.0.29)，徹底杜絕 '2.0.3 to'、'1.0.0 STABLE' 等非標準尾綴
+    """
+    if not raw:
+        return ""
+    raw = str(raw).strip()
+    m = re.search(r'v?(\d+(?:\.\d+)+)', raw, re.IGNORECASE)
+    if m:
+        ver_num = m.group(1).strip()
+        return f"v{ver_num}"
+    return ""
+
+
 def resolve_semantic_version(wdir: str, ref: str = "HEAD") -> str:
     """
-    智能解析專案或主程式在指定 Git ref (HEAD 或 origin/main) 下的語意化版本號 (vX.X.XX)
-    全面多源採樣並以 SemVer 權重取最高有效版本 (SemVer Max)：
-    1. Git Tag (若有打 v1.0.2 等標籤)
-    2. 專案主要原始碼檔案中的版本宣告 (core/launcher_v2.py, main.py, version.py, __version__.py, src/main.py, version.txt, 及子模組如 *_gui.py, *_core.py, app.py)
-    3. 最近 15 筆 Commit 歷史主旨中提取之版本宣告 (如 bump to v1.2.0, release v1.2.0 等)
+    智能解析專案或主程式在指定 Git ref (HEAD 或 origin/main) 下的真實語意化版本號 (vX.X.XX)
+    遵循嚴格的分層優先權 (Hierarchical Priority Order)，杜絕歷史 Commit 雜訊覆蓋真理版本：
+
+    優先階層 1 (最高權威 - 專案原始碼/版本設定檔宣告)：
+      - version.txt / VERSION.txt
+      - version.py / __version__.py 中的 VERSION 或 __version__ 賦值
+      - main.py / src/main.py / core/launcher_v2.py / app.py 中的 VERSION / __version__ 賦值
+      - 若找到明確變數賦值，立即採信為真理版本並返回！
+
+    優先階層 2 (Git 精確 Tag)：
+      - 若當前 ref 有精準打上 Git Tag (如 git describe --tags --exact-match ref)
+
+    優先階層 3 (UI 介面或文件顯式版本標記)：
+      - README.md 前 15 行標題
+      - src/gui/index.html / src/gui/views/about.html / gui/index.html 等標籤
+
+    優先階層 4 (最新 1 筆 Commit 主旨規範宣告 - 僅限 HEAD/當前 commit)：
+      - 僅檢查指定 ref 的最新 1 筆 Commit (git log -1 --format=%s)
+      - 且必須為標準 release / bump 語義 (如 chore(release): bump version to 2.0.2)
+
+    優先階層 5 (最近的歷史 Git Tag Fallback)：
+      - git describe --tags --abbrev=0 ref
+
+    若皆無法解析，預設保底返回 "v1.0.0"
     """
     flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-    found_versions = []
 
-    # 1. 檢查 Git Tag
-    try:
-        tag = subprocess.check_output(
-            ["git", "describe", "--tags", "--exact-match", ref],
-            cwd=wdir, creationflags=flags, text=True, timeout=3,
-            encoding="utf-8", errors="replace", stderr=subprocess.DEVNULL
-        ).strip()
-        if tag and re.match(r"^v?\d+\.\d+", tag):
-            found_versions.append(tag)
-    except Exception:
-        pass
-
-    try:
-        tag = subprocess.check_output(
-            ["git", "describe", "--tags", "--abbrev=0", ref],
-            cwd=wdir, creationflags=flags, text=True, timeout=3,
-            encoding="utf-8", errors="replace", stderr=subprocess.DEVNULL
-        ).strip()
-        if tag and re.match(r"^v?\d+\.\d+", tag):
-            found_versions.append(tag)
-    except Exception:
-        pass
-
-    # 2. 檢查原始碼檔案中的版本宣告
-    candidates = [
-        "core/launcher_v2.py",
-        "main.py",
+    # 1. 優先階層 1：檢查專案版本定義檔案 (最高權威 Source of Truth)
+    code_candidates = [
+        "version.txt",
+        "VERSION.txt",
         "version.py",
         "__version__.py",
+        "core/launcher_v2.py",
         "src/main.py",
-        "version.txt",
+        "main.py",
         "app.py"
     ]
     # 動態補充根目錄下常見的 *_gui.py, *_core.py
@@ -150,56 +161,100 @@ def resolve_semantic_version(wdir: str, ref: str = "HEAD") -> str:
             encoding="utf-8", errors="replace", stderr=subprocess.DEVNULL
         ).splitlines()
         for tf in tree_files:
-            if tf.endswith(".py") and any(k in tf.lower() for k in ["gui", "core", "app"]) and tf not in candidates:
-                candidates.append(tf)
+            if tf.endswith(".py") and any(k in tf.lower() for k in ["gui", "core", "app"]) and tf not in code_candidates:
+                code_candidates.append(tf)
     except Exception:
         pass
 
-    for cfile in candidates:
+    for cfile in code_candidates:
         try:
             content = subprocess.check_output(
                 ["git", "show", f"{ref}:{cfile}"],
                 cwd=wdir, creationflags=flags, text=True, timeout=3,
                 encoding="utf-8", errors="replace", stderr=subprocess.DEVNULL
             )
-            # 匹配 VERSION = "1.2.0 STABLE" 或 __version__ = "1.2.0"
+            if cfile.lower().endswith(".txt"):
+                first_line = content.strip().splitlines()[0] if content.strip() else ""
+                v = clean_version_str(first_line)
+                if v:
+                    return v
+
+            # 匹配明確賦值語法：VERSION = "..." 或 __version__ = "..."
             m = re.search(r'(?:VERSION|__version__)\s*=\s*["\']([^"\']+)["\']', content)
             if m:
-                found_versions.append(m.group(1).strip())
-            # 匹配 UI 標題或文字中的版本標註 (如 v1.2.0 STABLE, v1.2.0)
-            m_ui = re.search(r'v(\d+\.\d+\.\d+(?:\s+[A-Za-z0-9_-]+)?)', content)
-            if m_ui:
-                found_versions.append(m_ui.group(1).strip())
-
-            if cfile == "version.txt":
-                first_line = content.strip().splitlines()[0]
-                if re.match(r"^v?\d+\.\d+", first_line):
-                    found_versions.append(first_line)
+                v = clean_version_str(m.group(1))
+                if v:
+                    return v
         except Exception:
             continue
 
-    # 3. 檢查最近 15 筆 Commit 訊息中是否標記了版本
+    # 2. 優先階層 2：檢查 Git 精確 Tag
     try:
-        log_lines = subprocess.check_output(
-            ["git", "log", "-n", "15", "--format=%s", ref],
-            cwd=wdir, creationflags=flags, text=True, timeout=4,
+        tag = subprocess.check_output(
+            ["git", "describe", "--tags", "--exact-match", ref],
+            cwd=wdir, creationflags=flags, text=True, timeout=3,
             encoding="utf-8", errors="replace", stderr=subprocess.DEVNULL
-        ).splitlines()
-        for subj in log_lines:
-            m = re.search(r'(?:bump to|release|version|ver|\b)v?(\d+\.\d+\.\d+(?:\s+[A-Za-z0-9_-]+)?)', subj, re.IGNORECASE)
-            if m:
-                found_versions.append(m.group(1).strip())
-            else:
-                m2 = re.search(r'(?:^|[ (\[])v?(\d+\.\d+(?:\.\d+)?)[ )\]]?', subj, re.IGNORECASE)
-                if m2:
-                    found_versions.append(m2.group(1).strip())
+        ).strip()
+        v = clean_version_str(tag)
+        if v:
+            return v
     except Exception:
         pass
 
-    # 4. 篩選出最大語意化版本號 (SemVer Max)
-    if found_versions:
-        best_ver = max(found_versions, key=parse_version_tuple)
-        return best_ver if best_ver.startswith("v") else f"v{best_ver}"
+    # 3. 優先階層 3：UI 介面或文件顯式版本標記
+    ui_doc_candidates = [
+        "README.md",
+        "src/gui/index.html",
+        "src/gui/views/about.html",
+        "gui/index.html"
+    ]
+    for doc in ui_doc_candidates:
+        try:
+            content = subprocess.check_output(
+                ["git", "show", f"{ref}:{doc}"],
+                cwd=wdir, creationflags=flags, text=True, timeout=3,
+                encoding="utf-8", errors="replace", stderr=subprocess.DEVNULL
+            )
+            lines = content.splitlines()[:20]
+            # 優先搜尋三段式版本 (如 v2.0.2，避免 2.0 廣義版本)
+            for line in lines:
+                v = clean_version_str(line)
+                if v and len(v.split('.')) >= 3:
+                    return v
+            for line in lines:
+                v = clean_version_str(line)
+                if v and v not in ("v1.0", "v2.0"):
+                    return v
+        except Exception:
+            continue
+
+    # 4. 優先階層 4：最新 1 筆 Commit 主旨規範宣告 (僅限 release/bump)
+    try:
+        subj = subprocess.check_output(
+            ["git", "log", "-1", "--format=%s", ref],
+            cwd=wdir, creationflags=flags, text=True, timeout=3,
+            encoding="utf-8", errors="replace", stderr=subprocess.DEVNULL
+        ).strip()
+        m = re.search(r'(?:bump\s+(?:version\s+)?to|release(?:\s+version)?)\s*v?(\d+(?:\.\d+)+)', subj, re.IGNORECASE)
+        if m:
+            v = clean_version_str(m.group(1))
+            if v:
+                return v
+    except Exception:
+        pass
+
+    # 5. 優先階層 5：最近的歷史 Git Tag Fallback
+    try:
+        tag = subprocess.check_output(
+            ["git", "describe", "--tags", "--abbrev=0", ref],
+            cwd=wdir, creationflags=flags, text=True, timeout=3,
+            encoding="utf-8", errors="replace", stderr=subprocess.DEVNULL
+        ).strip()
+        v = clean_version_str(tag)
+        if v:
+            return v
+    except Exception:
+        pass
 
     return "v1.0.0"
 
