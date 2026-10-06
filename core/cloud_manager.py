@@ -32,6 +32,54 @@ def check_requirements_satisfied(req_path: str) -> bool:
         return False
 
 
+def resolve_safe_python_exe(candidate: str = None) -> str:
+    """
+    確保取得可執行 -m pip 的真實 Python 解譯器路徑，
+    100% 杜絕 C# Wrapper 或 AIToolLauncher.exe 被誤當作 Python 解譯器
+    """
+    # 1. 檢查候選路徑是否為真實 python
+    if candidate and os.path.exists(candidate) and not candidate.lower().endswith("aitoollauncher.exe"):
+        c = candidate.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in candidate.lower() else candidate
+        if os.path.exists(c):
+            return c
+        return candidate
+
+    # 2. 檢查環境變數 TRUE_PYTHON_EXE / TRUE_PYTHON_DIR
+    env_exe = os.environ.get("TRUE_PYTHON_EXE", "")
+    if env_exe and os.path.exists(env_exe) and not env_exe.lower().endswith("aitoollauncher.exe"):
+        c = env_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in env_exe.lower() else env_exe
+        if os.path.exists(c):
+            return c
+        return env_exe
+
+    env_dir = os.environ.get("TRUE_PYTHON_DIR", "")
+    if env_dir and os.path.isdir(env_dir):
+        for name in ["python.exe", "pythonw.exe"]:
+            p = os.path.join(env_dir, name)
+            if os.path.exists(p):
+                return p
+
+    # 3. 檢查 sys.executable (嚴格排除 AIToolLauncher.exe)
+    if sys.executable and not sys.executable.lower().endswith("aitoollauncher.exe"):
+        c = sys.executable.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in sys.executable.lower() else sys.executable
+        if os.path.exists(c):
+            return c
+
+    # 4. 檢查 runtime/python
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    for cand in ["python.exe", "pythonw.exe"]:
+        p = os.path.join(base_dir, "runtime", "python", cand)
+        if os.path.exists(p):
+            return p
+
+    # 5. 系統 PATH 尋找
+    sh_py = shutil.which("python.exe") or shutil.which("python")
+    if sh_py and not sh_py.lower().endswith("aitoollauncher.exe"):
+        return sh_py
+
+    return "python"
+
+
 def get_silent_flags_and_startupinfo():
     """
     確保在 Windows 下執行所有 Git 與 Pip 指令時 100% 完全無黑窗閃現
@@ -353,13 +401,16 @@ def install_cloud_repo_async(repo: dict, cloud_tools_dir: str, python_exe: str, 
                     _report(95, "依賴套件已全數就緒！")
                 else:
                     _report(90, "正在下載並安裝依賴套件...")
-                    pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
-                    subprocess.run(
-                        [pip_cmd, "-m", "pip", "install", "--default-timeout=15", "-r", req_path],
-                        cwd=target_dir, creationflags=flags, startupinfo=startupinfo,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                        timeout=45
-                    )
+                    pip_cmd = resolve_safe_python_exe(python_exe)
+                    try:
+                        subprocess.run(
+                            [pip_cmd, "-m", "pip", "install", "--default-timeout=15", "-r", req_path],
+                            cwd=target_dir, creationflags=flags, startupinfo=startupinfo,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            timeout=60
+                        )
+                    except Exception as pip_err:
+                        print(f"[Warning] 安裝依賴遇到警告 (可非致命跳過): {pip_err}")
 
             _report(100, "安裝完成！")
 
@@ -437,13 +488,16 @@ def reinstall_tool_async(tool_data: dict, python_exe: str, on_finished, on_progr
                     _report(95, f"依賴套件已全數就緒！")
                 else:
                     _report(88, f"正在下載並安裝依賴套件...")
-                    pip_cmd = python_exe.lower().replace("pythonw.exe", "python.exe") if "pythonw.exe" in python_exe.lower() else python_exe
-                    subprocess.run(
-                        [pip_cmd, "-m", "pip", "install", "--default-timeout=15", "-r", req_path],
-                        cwd=wdir, creationflags=flags, startupinfo=startupinfo,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                        timeout=45
-                    )
+                    pip_cmd = resolve_safe_python_exe(python_exe)
+                    try:
+                        subprocess.run(
+                            [pip_cmd, "-m", "pip", "install", "--default-timeout=15", "-r", req_path],
+                            cwd=wdir, creationflags=flags, startupinfo=startupinfo,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            timeout=60
+                        )
+                    except Exception as pip_err:
+                        print(f"[Warning] 重新拉取時依賴套件安裝警告: {pip_err}")
 
             _report(100, f"更新完成！")
             send_identity_webhook(f"🔄 重新拉取小工具: {name}", f"工作目錄: {wdir}")

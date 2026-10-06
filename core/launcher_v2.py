@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.30"
+VERSION = "2.0.31"
 
 
 def parse_version_tuple(v_str: str) -> tuple:
@@ -2326,9 +2326,7 @@ class AIToolLauncherV2(MSFluentWindow):
     def reinstall_tool(self, tool_data: dict):
         try:
             name = tool_data.get("name", "")
-            py_cli = sys.executable
-            if "pythonw.exe" in py_cli.lower():
-                py_cli = py_cli.lower().replace("pythonw.exe", "python.exe")
+            py_cli = get_real_python_exe(prefer_gui=False)
 
             def _on_progress(pct, status_text):
                 self.installProgressSignal.emit(name, pct, status_text)
