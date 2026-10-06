@@ -13,8 +13,7 @@
 CloudTools/
 
 # 3. 本地個人配置、快取、日誌與臨時檔案
-resources/config/*
-!resources/config/registry.json
+resources/config/
 resources/cache/
 *.log
 launcher_error.log

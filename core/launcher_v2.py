@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.29"
+VERSION = "2.0.30"
 
 
 def parse_version_tuple(v_str: str) -> tuple:
@@ -1448,65 +1448,110 @@ class AIToolLauncherV2(MSFluentWindow):
                     sa.viewport().setStyleSheet("background: transparent !important; border: none !important;")
 
     def load_registry(self) -> dict:
+        data = {"tools": [], "favorites": []}
         if os.path.exists(self.registry_file):
             try:
                 with open(self.registry_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    tools = data.get("tools", [])
-                    modified = False
-                    for t in tools:
-                        exe = t.get("executable", "")
-                        wdir = t.get("working_dir", "")
-                        if not os.path.exists(exe):
-                            if "2.0\\CloudTools" in exe:
-                                fixed_exe = exe.replace("2.0\\CloudTools", "CloudTools")
-                                fixed_wdir = wdir.replace("2.0\\CloudTools", "CloudTools")
-                                if os.path.exists(fixed_exe):
-                                    t["executable"] = fixed_exe
-                                    t["working_dir"] = fixed_wdir
-                                    modified = True
-                            elif "\\CloudTools" in exe and "2.0\\CloudTools" not in exe:
-                                fixed_exe = exe.replace("\\CloudTools", "\\2.0\\CloudTools")
-                                fixed_wdir = wdir.replace("\\CloudTools", "\\2.0\\CloudTools")
-                                if os.path.exists(fixed_exe):
-                                    t["executable"] = fixed_exe
-                                    t["working_dir"] = fixed_wdir
-                                    modified = True
-                    # 自動保障本機核心開發專案 (若本地原始碼存在且未在清單中，自動登記防遺失)
-                    local_dev_manifest = r"G:\python\SteamManifestUpdater\src\main.py"
-                    if os.path.exists(local_dev_manifest):
-                        registered_exes = [os.path.normpath(t.get("executable", "")) for t in tools]
-                        if os.path.normpath(local_dev_manifest) not in registered_exes:
-                            tools.insert(0, {
-                                "name": "Steam Manifest - 本地開發版",
-                                "description": "本地原始碼開發版本 (支援快速熱重載與除錯)",
-                                "executable": local_dev_manifest,
-                                "working_dir": r"G:\python\SteamManifestUpdater",
-                                "is_local": True
-                            })
-                            favs = data.setdefault("favorites", [])
-                            if "Steam Manifest - 本地開發版" not in favs:
-                                favs.insert(0, "Steam Manifest - 本地開發版")
-                            modified = True
+            except Exception:
+                data = {"tools": [], "favorites": []}
 
-                    if modified:
-                        self.save_registry()
-                    return data
+        tools = data.get("tools", [])
+        favs = data.get("favorites", [])
+        cleaned_tools = []
+        seen_keys = set()
+        modified = False
+
+        for t in tools:
+            is_local = is_local_tool_data(t)
+            exe = t.get("executable", "")
+            wdir = t.get("working_dir", "")
+            repo_name = t.get("repo_name", "")
+            name = t.get("name", "")
+
+            # 1. 本地專案：若本機執行檔不存在，視為外來無效項目，予以自動剔除
+            if is_local:
+                if not exe or not os.path.exists(exe):
+                    modified = True
+                    continue
+
+            # 2. 雲端工具：自適應校正本機路徑
+            if not is_local:
+                if not exe or not os.path.exists(exe):
+                    folder = os.path.basename(wdir) if wdir else repo_name
+                    candidate_wdir = os.path.join(self.cloud_tools_dir, folder) if folder else ""
+                    fixed = False
+                    if candidate_wdir and os.path.exists(candidate_wdir):
+                        for c_exe in [
+                            os.path.join(candidate_wdir, "src", "main.py"),
+                            os.path.join(candidate_wdir, "main.py"),
+                            os.path.join(candidate_wdir, f"{folder}.exe"),
+                            os.path.join(candidate_wdir, "app.py")
+                        ]:
+                            if os.path.exists(c_exe):
+                                t["executable"] = c_exe
+                                t["working_dir"] = candidate_wdir
+                                exe = c_exe
+                                wdir = candidate_wdir
+                                fixed = True
+                                modified = True
+                                break
+                    # 若校正後仍不存在，說明本機尚未下載/未安裝此工具，從已安裝清單剔除
+                    if not fixed and (not exe or not os.path.exists(exe)):
+                        modified = True
+                        continue
+
+            # 3. 去重判定 (避免多重同名或同 repo 幽靈卡片)
+            dedup_key = (
+                "local:" + os.path.normpath(exe).lower() if is_local
+                else "cloud:" + (repo_name.lower() or name.lower())
+            )
+            if dedup_key in seen_keys:
+                modified = True
+                continue
+            seen_keys.add(dedup_key)
+            cleaned_tools.append(t)
+
+        # 4. 動態偵測本機開發版 (僅依賴同層目錄相對路徑，絕不寫死個人磁碟槽)
+        try:
+            base_parent = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            candidate_dev_exe = os.path.join(base_parent, "SteamManifestUpdater", "src", "main.py")
+            candidate_dev_wdir = os.path.join(base_parent, "SteamManifestUpdater")
+            if os.path.exists(candidate_dev_exe) and os.path.exists(os.path.join(candidate_dev_wdir, ".git")):
+                registered_exes = [os.path.normpath(t.get("executable", "")).lower() for t in cleaned_tools]
+                if os.path.normpath(candidate_dev_exe).lower() not in registered_exes:
+                    cleaned_tools.insert(0, {
+                        "name": "Steam Manifest - 本地開發版",
+                        "description": "本地原始碼開發版本 (支援快速熱重載與除錯)",
+                        "executable": candidate_dev_exe,
+                        "working_dir": candidate_dev_wdir,
+                        "is_local": True
+                    })
+                    if "Steam Manifest - 本地開發版" not in favs:
+                        favs.insert(0, "Steam Manifest - 本地開發版")
+                    modified = True
+        except Exception:
+            pass
+
+        # 5. 同步淨化收藏清單 (剔除已不存在的工具)
+        valid_names = set(t.get("name", "") for t in cleaned_tools)
+        valid_repos = set(t.get("repo_name", "") for t in cleaned_tools if t.get("repo_name"))
+        cleaned_favs = [f for f in favs if f in valid_names or f in valid_repos]
+        if len(cleaned_favs) != len(favs):
+            modified = True
+
+        data["tools"] = cleaned_tools
+        data["favorites"] = cleaned_favs
+
+        if modified:
+            try:
+                os.makedirs(self.config_dir, exist_ok=True)
+                with open(self.registry_file, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4, ensure_ascii=False)
             except Exception:
                 pass
-        
-        # 預設註冊表
-        init_tools = []
-        local_dev_manifest = r"G:\python\SteamManifestUpdater\src\main.py"
-        if os.path.exists(local_dev_manifest):
-            init_tools.append({
-                "name": "Steam Manifest - 本地開發版",
-                "description": "本地原始碼開發版本 (支援快速熱重載與除錯)",
-                "executable": local_dev_manifest,
-                "working_dir": r"G:\python\SteamManifestUpdater",
-                "is_local": True
-            })
-        return {"tools": init_tools, "favorites": ["Steam Manifest - 本地開發版"] if init_tools else []}
+
+        return data
 
     def save_registry(self):
         try:
