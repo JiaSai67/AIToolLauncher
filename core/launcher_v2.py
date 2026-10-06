@@ -84,7 +84,7 @@ except ModuleNotFoundError:
 # 立即安裝全域崩潰與異常攔截器
 install_global_exception_hook()
 
-VERSION = "2.0.27"
+VERSION = "2.0.28"
 
 
 def parse_version_tuple(v_str: str) -> tuple:
@@ -2638,6 +2638,19 @@ class AIToolLauncherV2(MSFluentWindow):
         import tempfile
         bat_path = os.path.join(tempfile.gettempdir(), "aitoollauncher_updater.bat")
 
+        ps_zip_download = (
+            "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; "
+            "$z = Join-Path $env:TEMP 'aitoollauncher_upd.zip'; "
+            "Invoke-WebRequest -Uri 'https://github.com/JiaSai67/AIToolLauncher/archive/refs/heads/main.zip' -OutFile $z; "
+            "$ex = Join-Path $env:TEMP 'aitoollauncher_upd_dir'; "
+            "if (Test-Path $ex) { Remove-Item $ex -Recurse -Force }; "
+            "Expand-Archive -Path $z -DestinationPath $ex -Force; "
+            "$src = Join-Path $ex 'AIToolLauncher-main'; "
+            "Copy-Item -Path \"$src\\*\" -Destination (Get-Location) -Recurse -Force; "
+            "Remove-Item $z -Force; "
+            "Remove-Item $ex -Recurse -Force"
+        )
+
         bat_content = f"""@echo off
 chcp 65001 >nul
 title AIToolLauncher 極速更新器
@@ -2654,16 +2667,31 @@ taskkill /F /IM AIToolLauncher.exe >nul 2>&1
 
 cd /d "{base_root}"
 
-:: 2. 極速同步最新代碼
-echo [1/3] 正在拉取主倉庫最新發布內容...
-git fetch origin main --quiet
-if errorlevel 1 (
-    echo [警告] 遠端拉取遇到問題，嘗試直接重設...
+:: 2. 極速同步最新代碼 (完整相容 Git 與非 Git/ZIP 環境)
+if not exist ".git" (
+    where git >nul 2>&1
+    if not errorlevel 1 (
+        echo [1/3] 偵測到本機尚未關聯 Git 版本庫，正在自動初始化並同步主倉庫...
+        git init --quiet
+        git remote add origin https://github.com/JiaSai67/AIToolLauncher.git >nul 2>&1
+        git fetch origin main --depth=1 --quiet
+        git reset --hard origin/main --quiet
+        git branch -M main >nul 2>&1
+        git branch --set-upstream-to=origin/main main >nul 2>&1
+    ) else (
+        echo [1/3] 系統未安裝 Git，正在使用 GitHub 高速 ZIP 下載更新通道...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "{ps_zip_download}"
+    )
+) else (
+    echo [1/3] 正在拉取主倉庫最新發布內容...
+    git fetch origin main --quiet
+    if errorlevel 1 (
+        echo [警告] 遠端拉取遇到問題，嘗試直接重設...
+    )
+    echo [2/3] 正在重設工作目錄至最新版本...
+    git reset --hard origin/main
+    git clean -fd -e runtime -e CloudTools -e .env -e *.log
 )
-
-echo [2/3] 正在重設工作目錄至最新版本...
-git reset --hard origin/main
-git clean -fd -e runtime -e CloudTools -e .env -e *.log
 
 :: 3. 安靜配置依賴套件 (已有套件 0 秒跳過)
 if exist "{req_path}" (
@@ -2690,7 +2718,7 @@ timeout /t 1 /nobreak >nul
 exit /b 0
 """
         try:
-            with open(bat_path, "w", encoding="utf-8") as f:
+            with open(bat_path, "w", encoding="utf-8-sig") as f:
                 f.write(bat_content)
 
             InfoBar.info(

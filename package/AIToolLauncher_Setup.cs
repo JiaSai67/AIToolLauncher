@@ -1346,6 +1346,15 @@ namespace AIToolLauncherSetupV2
                             RunProcessCaptureOutput("git", "reset --hard origin/main", installDir);
                             cloneSuccess = true;
                         }
+                        else
+                        {
+                            // 目錄已有檔案但無 .git，自動現場初始化並綁定 GitHub 主倉庫
+                            RunProcessCaptureOutput("git", "init", installDir);
+                            RunProcessCaptureOutput("git", "remote add origin https://github.com/JiaSai67/AIToolLauncher.git", installDir);
+                            RunProcessCaptureOutput("git", "fetch origin main --depth=1", installDir);
+                            RunProcessCaptureOutput("git", "reset --hard origin/main", installDir);
+                            cloneSuccess = true;
+                        }
                     }
                     else
                     {

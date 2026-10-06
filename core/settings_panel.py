@@ -16,7 +16,7 @@ class SettingsPanel(QWidget):
     checkUpdateRequested = Signal()
     viewChangelogRequested = Signal()
 
-    def __init__(self, settings_file: str, version: str = "2.0.27", parent=None):
+    def __init__(self, settings_file: str, version: str = "2.0.28", parent=None):
         super().__init__(parent)
         self.setObjectName("settingsInterface")
         self.version = version
