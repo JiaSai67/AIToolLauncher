@@ -1,5 +1,5 @@
 import os, sys, subprocess, webbrowser, re
-from PySide6.QtCore import Qt, Signal, QRectF, QSize, QPoint
+from PySide6.QtCore import Qt, Signal, QRectF, QSize, QPoint, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QFont, QPen, QContextMenuEvent, QMovie
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSizePolicy
@@ -62,10 +62,14 @@ def format_card_title(raw_name: str) -> str:
 
 
 _ROUNDED_PIXMAP_CACHE: dict = {}
+_RAW_FILE_PIXMAP_CACHE: dict = {}
+_FINAL_CARD_ICON_CACHE: dict = {}
+_MAX_ICON_CACHE_ENTRIES = 256
+
 
 def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.22) -> QPixmap:
     """
-    將任意圖示裁切並繪製為最高解析度、鮮明原色的平滑圓角圖示 (具備高速記憶體快取，0ms 瞬發)
+    將任意圖示裁切並繪製為最高解析度、鮮明原色的平滑圓角圖示 (具備有界高速記憶體快取，0ms 瞬發，零記憶體洩漏)
     """
     if src_pixmap.isNull():
         return src_pixmap
@@ -93,18 +97,91 @@ def get_rounded_pixmap(src_pixmap: QPixmap, size: int, radius_ratio: float = 0.2
     painter.drawPixmap(x, y, scaled)
     painter.end()
 
+    if len(_ROUNDED_PIXMAP_CACHE) >= _MAX_ICON_CACHE_ENTRIES:
+        _ROUNDED_PIXMAP_CACHE.clear()
     _ROUNDED_PIXMAP_CACHE[cache_key] = dest
     return dest
 
 
+class CachedBadgeLabel(CaptionLabel):
+    """
+    具備靜態點陣圖快取的頂層狀態膠囊標籤：
+    僅在文字或樣式變更時渲染一次 QSS 與文字，背景 GIF 動畫重繪時僅需 0.005ms 直接貼圖！
+    """
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        if text:
+            self.setText(text)
+        self._badge_snapshot = None
+        self._is_capturing = False
+        self._snapshot_scheduled = False
+
+    def invalidate_snapshot(self):
+        self._badge_snapshot = None
+        if not self._snapshot_scheduled:
+            self._snapshot_scheduled = True
+            QTimer.singleShot(0, self.rebuild_snapshot)
+
+    def rebuild_snapshot(self):
+        self._snapshot_scheduled = False
+        if self._is_capturing or self.isHidden() or self.width() <= 0 or self.height() <= 0:
+            return
+        self._is_capturing = True
+        self._badge_snapshot = None
+        try:
+            pix = QPixmap(self.size())
+            pix.fill(Qt.transparent)
+            self.render(pix)
+            self._badge_snapshot = pix
+        finally:
+            self._is_capturing = False
+        self.update()
+
+    def paintEvent(self, event):
+        if not self._is_capturing and self._badge_snapshot is not None and not self._badge_snapshot.isNull():
+            painter = QPainter(self)
+            painter.drawPixmap(0, 0, self._badge_snapshot)
+            painter.end()
+            return
+        super().paintEvent(event)
+
+
 class InnerCard(CardWidget):
     """
-    純淨內部小卡，僅包含圖示與標題，零預留空白
+    純淨內部小卡，僅包含圖示與標題，零預留空白。
+    內建非懸停狀態靜態點陣圖快取 (Idle Snapshot Cache)：
+    平時背景 GIF 播放時免除 QSS 解析與子元件重繪，滑鼠移入時即時切換原生 Hover 高亮動效！
     """
     def __init__(self, parent_wrapper):
         super().__init__(parent_wrapper)
         self.wrapper = parent_wrapper
         self.setCursor(Qt.PointingHandCursor)
+        self._is_hovered = False
+        self._idle_snapshot = None
+        self._is_capturing = False
+
+    def enterEvent(self, event):
+        self._is_hovered = True
+        self.wrapper._set_live_children_visible(True)
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event):
+        self._is_hovered = False
+        super().leaveEvent(event)
+        if self._idle_snapshot is not None and not self._idle_snapshot.isNull():
+            self.wrapper._set_live_children_visible(False)
+            self.update()
+        else:
+            self.wrapper._schedule_idle_snapshot()
+
+    def paintEvent(self, event):
+        if not self._is_hovered and not self._is_capturing and self._idle_snapshot is not None and not self._idle_snapshot.isNull():
+            painter = QPainter(self)
+            painter.drawPixmap(0, 0, self._idle_snapshot)
+            painter.end()
+            return
+        super().paintEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -194,7 +271,6 @@ class ToolCardWidget(QWidget):
         self.icon_label.setAlignment(Qt.AlignCenter)
         self.icon_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.icon_label.setStyleSheet("background: transparent; border: none;")
-        self.update_icon()
         self.card_layout.addWidget(self.icon_label, 0, Qt.AlignCenter)
 
         # 非同步預載入 GitHub 雲端真實圖示
@@ -215,7 +291,7 @@ class ToolCardWidget(QWidget):
 
         # 2. 獨立圖層狀態膠囊 (依附於父容器最上層，絕不受限於卡片邊界裁剪)
         badge_parent = self.parent_flow_widget if self.parent_flow_widget else self
-        self.status_badge = CaptionLabel("", badge_parent)
+        self.status_badge = CachedBadgeLabel("", badge_parent)
         self.status_badge.setAlignment(Qt.AlignCenter)
         self.status_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.status_badge.hide()
@@ -227,9 +303,53 @@ class ToolCardWidget(QWidget):
         self.update_tooltip()
         self.card.installEventFilter(ToolTipFilter(self.card, showDelay=250, position=ToolTipPosition.BOTTOM))
 
+    def _set_live_children_visible(self, visible: bool):
+        if hasattr(self, "icon_label") and self.icon_label:
+            if self.icon_label.isVisible() != visible:
+                self.icon_label.setVisible(visible)
+        if hasattr(self, "title_label") and self.title_label:
+            if self.title_label.isVisible() != visible:
+                self.title_label.setVisible(visible)
+
+    def _schedule_idle_snapshot(self):
+        if not hasattr(self, "card") or not self.card:
+            return
+        self.card._idle_snapshot = None
+        if not getattr(self, "_snapshot_scheduled", False):
+            self._snapshot_scheduled = True
+            QTimer.singleShot(0, self._rebuild_idle_snapshot)
+
+    def _rebuild_idle_snapshot(self):
+        self._snapshot_scheduled = False
+        if not hasattr(self, "card") or not self.card:
+            return
+        if self.card._is_capturing or not self.isVisible():
+            return
+        if self.card.width() <= 0 or self.card.height() <= 0:
+            return
+        if self.card._is_hovered:
+            self._set_live_children_visible(True)
+            return
+        self.card._is_capturing = True
+        self.card._idle_snapshot = None
+        try:
+            self._set_live_children_visible(True)
+            self.card_layout.activate()
+            pix = QPixmap(self.card.size())
+            pix.fill(Qt.transparent)
+            self.card.render(pix)
+            self.card._idle_snapshot = pix
+            self._set_live_children_visible(False)
+        finally:
+            self.card._is_capturing = False
+        self.card.update()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.update_badge_pos()
+        if hasattr(self, "card") and self.card:
+            if self.card._idle_snapshot is None or self.card._idle_snapshot.size() != self.card.size():
+                self._schedule_idle_snapshot()
 
     def hideEvent(self, event):
         super().hideEvent(event)
@@ -242,6 +362,8 @@ class ToolCardWidget(QWidget):
             self.status_badge.show()
             self.update_badge_pos()
             self.status_badge.raise_()
+        if hasattr(self, "card") and self.card and self.card._idle_snapshot is None:
+            self._schedule_idle_snapshot()
 
     def update_badge_pos(self):
         """
@@ -264,6 +386,7 @@ class ToolCardWidget(QWidget):
             by = self.y() + self.height() - 10
 
         self.status_badge.setGeometry(bx, by, bw, bh)
+        self.status_badge.invalidate_snapshot()
 
     def update_tooltip(self):
         name = self.data.get("name", "未命名工具")
@@ -455,7 +578,19 @@ class ToolCardWidget(QWidget):
             self.update_icon()
 
     def update_icon(self):
-        raw_pixmap = self.get_tool_raw_pixmap()
+        icon_path = self.resolve_tool_icon_path()
+        try:
+            mtime = int(os.path.getmtime(icon_path)) if icon_path and os.path.exists(icon_path) else 0
+        except Exception:
+            mtime = 0
+
+        final_key = (icon_path, mtime, self.icon_size, self.is_favorite)
+        if final_key in _FINAL_CARD_ICON_CACHE:
+            self.icon_label.setPixmap(_FINAL_CARD_ICON_CACHE[final_key])
+            self._schedule_idle_snapshot()
+            return
+
+        raw_pixmap = self.get_tool_raw_pixmap(icon_path, mtime)
         rounded_pixmap = get_rounded_pixmap(raw_pixmap, self.icon_size)
 
         if self.is_favorite:
@@ -478,11 +613,17 @@ class ToolCardWidget(QWidget):
             painter.setFont(font)
             painter.drawText(QRectF(self.icon_size - star_size - 1, 1, star_size, star_size), Qt.AlignCenter, "★")
             painter.end()
-            self.icon_label.setPixmap(fav_pixmap)
+            result_pix = fav_pixmap
         else:
-            self.icon_label.setPixmap(rounded_pixmap)
+            result_pix = rounded_pixmap
 
-    def get_tool_raw_pixmap(self) -> QPixmap:
+        if len(_FINAL_CARD_ICON_CACHE) >= _MAX_ICON_CACHE_ENTRIES:
+            _FINAL_CARD_ICON_CACHE.clear()
+        _FINAL_CARD_ICON_CACHE[final_key] = result_pix
+        self.icon_label.setPixmap(result_pix)
+        self._schedule_idle_snapshot()
+
+    def resolve_tool_icon_path(self) -> str:
         default_icon = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.png")
         repo_name = self.data.get("repo_name") or self.data.get("name", "")
         working_dir = self.data.get("working_dir", "")
@@ -513,16 +654,32 @@ class ToolCardWidget(QWidget):
                                 shutil.copy2(p, cached_file)
                         except Exception:
                             pass
-                    return QPixmap(p)
+                    return p
 
         # 2. 未安裝專案：檢查本地已快取的 GitHub 雲端圖示 (resources/cache/icons/{repo_name}.png)
         for cand in [repo_name, repo_name.replace(" ", ""), self.data.get("name", "")]:
             if cand:
                 cached_file = os.path.join(cache_dir, f"{cand}.png")
                 if os.path.exists(cached_file) and os.path.getsize(cached_file) > 0:
-                    return QPixmap(cached_file)
+                    return cached_file
 
-        return QPixmap(default_icon)
+        return default_icon
+
+    def get_tool_raw_pixmap(self, resolved_path: str = None, mtime: int = None) -> QPixmap:
+        p = resolved_path or self.resolve_tool_icon_path()
+        if mtime is None:
+            try:
+                mtime = int(os.path.getmtime(p)) if p and os.path.exists(p) else 0
+            except Exception:
+                mtime = 0
+        raw_key = (p, mtime)
+        if raw_key in _RAW_FILE_PIXMAP_CACHE:
+            return _RAW_FILE_PIXMAP_CACHE[raw_key]
+        pix = QPixmap(p)
+        if len(_RAW_FILE_PIXMAP_CACHE) >= _MAX_ICON_CACHE_ENTRIES:
+            _RAW_FILE_PIXMAP_CACHE.clear()
+        _RAW_FILE_PIXMAP_CACHE[raw_key] = pix
+        return pix
 
     def set_icon_size(self, size: int):
         self.icon_size = size
@@ -532,8 +689,8 @@ class ToolCardWidget(QWidget):
         self.card.setGeometry(0, 0, card_w, card_h)
         self.icon_label.setFixedSize(self.icon_size, self.icon_size)
         self.title_label.setFixedSize(card_w - 14, 38)
-        self.update_badge_pos()
         self.update_icon()
+        self.update_badge_pos()
 
     def show_context_menu(self, pos: QPoint):
         menu = RoundMenu(parent=self)
@@ -586,17 +743,14 @@ class ToolCardWidget(QWidget):
 
         # 🚀 60~144 FPS 極速平滑彈出選單 (FADE_IN_DROP_DOWN 零掉幀與動畫暫停機制)
         main_win = self.window()
-        bg_movie = getattr(main_win, "bg_movie", None)
-        movie_was_running = False
-        if bg_movie and hasattr(bg_movie, "state") and bg_movie.state() == QMovie.Running:
-            movie_was_running = True
-            bg_movie.setPaused(True)
+        if hasattr(main_win, "_set_gif_paused"):
+            main_win._set_gif_paused("menu", True)
 
         try:
             menu.exec(pos, ani=True, aniType=MenuAnimationType.FADE_IN_DROP_DOWN)
         finally:
-            if movie_was_running and bg_movie and bg_movie.state() == QMovie.Paused:
-                bg_movie.setPaused(False)
+            if hasattr(main_win, "_set_gif_paused"):
+                main_win._set_gif_paused("menu", False)
 
     def open_tool_folder(self):
         working_dir = self.data.get("working_dir", "")

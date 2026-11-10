@@ -629,7 +629,7 @@ class WebApi:
                     t["executable"] = exe
                     t["working_dir"] = wdir
 
-            is_installed = bool(exe and os.path.exists(exe))
+            is_installed = bool(exe and (is_local or os.path.exists(exe)))
             is_fav = name in favorites
 
             # 運行中狀態判定
